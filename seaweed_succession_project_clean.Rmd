@@ -1,0 +1,1200 @@
+---
+title: "Seaweed succession project clean"
+author: "Xiaoqian Yu"
+date: "2022-10-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr:: opts_knit$set(root.dir = "C:/Users/Xiaoqian/Desktop/seaweed/FE_enrich")
+```
+
+##import libraries
+```{r,warning=FALSE, message=FALSE}
+library(phyloseq)
+library(ggplot2)
+library(RColorBrewer)
+library(scales)
+library(stringr)
+library(reshape)
+#library(plyr)
+library(dplyr)
+library(qdap)
+library(cowplot)
+library(corrplot)
+library(growthrates)
+library(grid)
+library(gridExtra)
+#library(gplots)  #for heatmap
+library(KEGGREST)
+#library(made4)  #for heatplot function
+library(EnvStats)
+library(lattice)
+library(ggpubr)
+```
+
+##import original succession data
+```{r}
+barcodes=read.table('151005_resequence/dada2/barcode_renamed_omitted.txt')
+barcodes_alg=read.table('151005_resequence/dada2/barcode_Alg_new.txt')
+
+otu_FE_Alg_enrich=as.data.frame(readRDS('151005_resequence/dada2/seqtab_FE_alg_chimera.rds'))
+seq_11strains_ASV=read.csv('151005_resequence/dada2/sequences_11strains_ASV.csv',row.names = 1)
+tax_table=readRDS('151005_resequence/dada2/taxa_species_new.rds')
+```
+
+#set up swapping functions
+```{r}
+
+short_names=c("Psychro9","Psychro14","Vibrio1","Vibrio2","Pseudo5","Halo10","Rhodo26","Altero38","Flavo71","Oceano4")
+long_names=c("Psychromonas9","Psychromonas14","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+substrate_old=c('FE','Man')
+substrate_new=c('FL','Mannitol')
+
+
+short_to_long=function(x){
+  y=mgsub(short_names,long_names,x)
+  return(y)
+}
+substrate_swap=function(x){
+  y=mgsub(substrate_old,substrate_new,x)
+  return(y)
+}
+ASV11_swap=function(x){
+  y=mgsub(seq_11strains_ASV$ASV11,seq_11strains_ASV$ASV11_new,x)
+  return(y)
+}
+
+```
+
+
+#Clean dataset and split dataset into FE and Alg
+```{r,warning=FALSE}
+tax_table=tax_table %>% mutate(Genus=case_when(is.na(Genus.y)~Genus.x, TRUE ~ Genus.y))
+
+tax_table$Genus.x=NULL
+tax_table$Genus.y=NULL
+n=ncol(tax_table)
+tax_table[,c(n,n-1)]=tax_table[,c(n-1,n)]
+names(tax_table)[c(n,n-1)]=names(tax_table)[c(n-1,n)]
+tax_table$ASV=paste0(tax_table$Genus,rownames(tax_table))
+#tax_table$ASV2=paste0(tax_table$Genus,rownames(tax_table))
+rownames(tax_table)=tax_table$Row.names
+tax_table$Row.names=NULL
+tax_table=merge(tax_table,seq_11strains_ASV,by=0,all=T)
+tax_table$ASV11<-tax_table$ASV11_new
+tax_table$ASV11_new=NULL
+rownames(tax_table)=tax_table$Row.names
+tax_table$Row.names=NULL
+tax_table_table=as.matrix(tax_table)
+
+otu_FE_enrich=merge(barcodes,otu_FE_Alg_enrich,by.x = 'V2',by.y = 0)
+rownames(otu_FE_enrich)=otu_FE_enrich$V1
+otu_FE_enrich$V1=NULL
+otu_FE_enrich$V2=NULL
+
+otu_Alg_enrich=merge(barcodes_alg,otu_FE_Alg_enrich,by.x = 'V2',by.y = 0)
+rownames(otu_Alg_enrich)=otu_Alg_enrich$V1
+otu_Alg_enrich$V1=NULL
+otu_Alg_enrich$V2=NULL
+```
+
+##FE dataset--we currently only look at FE dataset
+```{r}
+
+metadata = rownames(otu_FE_enrich)
+source_rep=sapply(strsplit(metadata, "-"), `[`, 4)
+source_rep=gsub('WAT','Seawater',source_rep)
+source_rep=gsub('SED','Sediment',source_rep)
+time=sapply(strsplit(metadata, "-"), `[`, 5)
+source=substr(sapply(strsplit(metadata, "-"), `[`, 4),1,3)
+source=gsub('WAT','Seawater',source)
+source=gsub('SED','Sediment',source)
+
+metadata_FE <- data.frame(source_rep=source_rep, time=time,source=source)
+rownames(metadata_FE)=rownames(otu_FE_enrich)
+
+
+ps = phyloseq(otu_table(otu_FE_enrich, taxa_are_rows=FALSE), 
+              sample_data(metadata_FE), 
+              tax_table(tax_table_table))
+
+```
+
+#Clean FE dataset
+```{r}
+############FE#######################################
+ps_FE = prune_samples(source != "NoC"& source != "Vib", ps)
+ps_FE = prune_samples(sample_sums(ps_FE) > 3000, ps_FE)
+ps_FE = filter_taxa(ps_FE, function(x) sum(x > 3) > (0.1*length(x)), TRUE)  #Remove taxa not seen more than 3 reads in at least 10% of the samples.
+
+ps_FE_r = rarefy_even_depth(ps_FE, sample.size = 3000,rngseed = T)    #Rarefy to 3000 reads/sample
+ps_FE_P = transform_sample_counts(ps_FE_r, function(x) 100 * x/sum(x))   # Percentage
+
+#ps_FE.ord <- ordinate(ps_FE_r, "NMDS", "bray")
+#p2 = plot_ordination(ps_FE_r, ps_FE.ord, type="samples", color="time", shape="source")+geom_point(size=4, alpha=0.75)+theme_bw()
+#p2+scale_colour_brewer(type="qual", palette="Paired")
+#png('Figures_final/S2_NMDS_seawater_sediment.png',width=1800,height=1500,res=300)
+#p2+ggtitle('NMDS of seawater and sediment communties')+theme(text = element_text(size = 15))    
+#dev.off()
+
+```
+
+#Select top 40ASVs in FE dataset (This is different from previous where I select from combined dataset)
+```{r}
+#########Select top 40 ASVs in the combined Alg and FE enrichment dataset#############
+ps_FE_P_no0=subset_samples(ps_FE_P,time!='000')
+
+top40otus = names(sort(taxa_sums(ps_FE_P_no0), TRUE)[1:40])     #only select from non zero timepoints
+
+taxtab40 = cbind(tax_table(ps_FE_P), family40 = NA, ASV40=NA, genus40= NA)
+
+taxtab40[top40otus, "genus40"] <- as(tax_table(ps_FE_P)[top40otus, "Genus"], 
+                                      "character")
+
+taxtab40[top40otus, "family40"] <- as(tax_table(ps_FE_P)[top40otus, "Family"], 
+                                      "character")
+taxtab40[top40otus, "ASV40"] <- as(tax_table(ps_FE_P)[top40otus, "ASV"], 
+                                   "character")
+
+
+tax_table(ps_FE_P) <- tax_table(taxtab40)
+tax_table(ps_FE_P)[is.na(tax_table(ps_FE_P)[,'ASV40']),'ASV40']='Other ASVs'
+
+
+```
+
+##Color Palette
+```{r}
+##Get color palette for ASV40
+getPalette = colorRampPalette(brewer.pal(11, "Paired"))
+ASV40List = unique(tax_table(ps_FE_P)[,"ASV40"])
+
+#read in ASV40Palette for genus
+ASV40Palette_1=read.csv('color_palettes/ASV40Palette_genus.csv',row.names = 1)
+ASV40Palette=ASV40Palette_1$ASV40Palette
+
+#read in ASV11Palette for genus
+ASV11Palette_1=read.csv('color_palettes/ASV11Palette_genus.csv',row.names = 1)
+ASV11Palette=ASV11Palette_1$ASV11palette
+ASV11list_new=rownames(ASV11Palette_1)
+ASV11list_early=ASV11list_new[6:10]
+ASV11list_late=ASV11list_new[1:5]
+
+#read in ASV5Palette for genus
+ASV5Palette_1=read.csv('color_palettes/ASV5Palette_genus.csv',row.names = 1)
+ASV5Palette=ASV5Palette_1$ASV5Palette
+
+```
+
+##Area plot for succession
+```{r}
+variable1 = as.character(get_variable(ps_FE_P, "source"))
+variable2 = as.character(get_variable(ps_FE_P, "time"))
+sample_data(ps_FE_P)$source1_time <- mapply(paste0, variable1, variable2, collapse = "_")
+ps_FE_P_merge=merge_samples(ps_FE_P,"source1_time")  #there is a bug in the merge_samples function that it can only calculate sums
+sample_data(ps_FE_P_merge)$time <- substr(sample_names(ps_FE_P_merge),9,11)
+sample_data(ps_FE_P_merge)$source <- substr(sample_names(ps_FE_P_merge),1,8)
+ps_FE_P_merge_1 = transform_sample_counts(ps_FE_P_merge, function(x) 100 * x/sum(x))  #renormalize so that it is actually mean
+sample_data(ps_FE_P_merge_1)$source =as.factor(sample_data(ps_FE_P_merge_1)$source)
+sample_data(ps_FE_P_merge_1)$source <- factor(sample_data(ps_FE_P_merge_1)$source, 
+                       levels= c('Seawater','Sediment'))
+sample_data(ps_FE_P_merge_1)$time1=as.numeric(sample_data(ps_FE_P_merge_1)$time)
+
+ps_FE_P_merge_1_output=data.frame(otu_table(ps_FE_P_merge_1))
+names(ps_FE_P_merge_1_output)=tax_table(ps_FE_P_merge_1)[,'ASV40']
+ps_FE_P_merge_1_output$time=sample_data(ps_FE_P_merge_1)$time1
+ps_FE_P_merge_1_output$source=sample_data(ps_FE_P_merge_1)$source
+
+ps_FE_P_merge_1_output_reshape=reshape::melt(ps_FE_P_merge_1_output,id=c('source','time'))   #beware that here there is a difference between melt in reshape and reshape2
+names(ps_FE_P_merge_1_output_reshape)=c('source','time','ASV40','percentage')
+
+ps_FE_P_merge_1_output_2=data.frame(otu_table(ps_FE_P_merge_1))
+names(ps_FE_P_merge_1_output_2)=tax_table(ps_FE_P_merge_1)[,'ASV']
+ps_FE_P_merge_1_output_2$time=sample_data(ps_FE_P_merge_1)$time1
+ps_FE_P_merge_1_output_2$source=sample_data(ps_FE_P_merge_1)$source
+
+ps_FE_P_merge_1_output_reshape_2=melt(ps_FE_P_merge_1_output_2,id=c('source','time'))
+names(ps_FE_P_merge_1_output_reshape_2)=c('source','time','ASV','percentage')
+ps_FE_P_merge_1_output_reshape_2$ASV40=ps_FE_P_merge_1_output_reshape$ASV40
+ps_FE_P_merge_1_output_reshape_2$ASV40=factor(ps_FE_P_merge_1_output_reshape_2$ASV40,levels=sort(as.character(unique(ps_FE_P_merge_1_output_reshape_2$ASV40))))
+ps_FE_P_merge_1_output_reshape_2$ASV40=factor(ps_FE_P_merge_1_output_reshape_2$ASV40,levels=c(levels(ps_FE_P_merge_1_output_reshape_2$ASV40)[25],levels(ps_FE_P_merge_1_output_reshape_2$ASV40)[1:24],levels(ps_FE_P_merge_1_output_reshape_2$ASV40)[26:41]))
+
+                                              
+
+ps_FE_P_merge_1_output_reshape_2$ASV=factor(ps_FE_P_merge_1_output_reshape_2$ASV,
+                                            levels=                               c(as.character(unique(ps_FE_P_merge_1_output_reshape_2$ASV)[!(unique(ps_FE_P_merge_1_output_reshape_2$ASV) %in% ps_FE_P_merge_1_output_reshape_2$ASV40)]),levels(ps_FE_P_merge_1_output_reshape_2$ASV40)[c(2:41)]))
+
+#ps_FE_P_merge_1_output_reshape_2_ASV40_merged=ps_FE_P_merge_1_output_reshape_2 %>% group_by(source,time,ASV40) %>% summarise(percentage=sum(percentage))
+#
+ps_FE_P_merge_1_output_reshape_2_keep0=data.frame(ps_FE_P_merge_1_output_reshape_2)
+
+ps_FE_P_merge_1_output_reshape_2= ps_FE_P_merge_1_output_reshape_2 %>% filter(time!=0)
+
+ps_FE_P_merge_1_output_reshape_2_06WAT= ps_FE_P_merge_1_output_reshape_2_keep0%>% filter(time %in% c(0,6) & source=='Seawater')
+
+ps_FE_P_merge_1_output_reshape_2_WAT= ps_FE_P_merge_1_output_reshape_2_keep0 %>% filter(source=='Seawater')
+
+ps_FE_P_merge_1_output_reshape_2_SED= ps_FE_P_merge_1_output_reshape_2_keep0 %>% filter(source=='Sediment')
+
+
+ASV351Palette=c(rep('#515a68',length(levels(ps_FE_P_merge_1_output_reshape_2$ASV))-length(ASV40Palette)),ASV40Palette)
+
+
+#png("Figures_final/F1c_top_ASV40_WAT_SED_merged_new_area.png",width=2400,height=1000,res=300)
+
+top_ASV_WAT_SED_merged=ggplot(ps_FE_P_merge_1_output_reshape_2,aes(x=time,y=percentage,fill=ASV))+labs(y = "Relative abundance (%)",x='Time (h)')+theme_bw()+facet_grid(~source)+geom_area(position="stack",stat ='identity',alpha=0.6)+
+  geom_line(position='stack',aes(color=ASV))+scale_color_manual(values=ASV351Palette)+
+  scale_x_continuous(breaks=c(6,14,24,47,72,110,144,216))+scale_fill_manual(values= ASV351Palette)
+top_ASV_WAT_SED_merged=top_ASV_WAT_SED_merged+theme(legend.position = 'none',text = element_text(size = 15),
+                                                    axis.text=element_text(color = "black"))
+
+#dev.off()
+
+#png("Figures_final/F1c_top_ASV40_WAT_SED_merged_06WAT.png",width=500,height=1000,res=300)
+
+top_ASV_WAT_SED_merged_06WAT=ggplot(ps_FE_P_merge_1_output_reshape_2_06WAT,aes(x=time,y=percentage,fill=ASV))+labs(y = "Relative abundance (%)",x='Time (h)')+theme_bw()+facet_grid(~source)+geom_area(position="stack",stat ='identity',alpha=0.6)+xlim(0,10)+
+  geom_line(position='stack',aes(color=ASV))+scale_color_manual(values=ASV351Palette)+
+  scale_x_continuous(breaks=c(0,6))+scale_fill_manual(values= ASV351Palette)
+top_ASV_WAT_SED_merged_06WAT=top_ASV_WAT_SED_merged_06WAT+theme(legend.position = 'none',text = element_text(size = 15),
+                                                          axis.text=element_text(color = "black"))
+
+#dev.off()
+
+#png("Figures_final/F1c_top_ASV40_WAT_SED_merged_new_area_total.png",width=3000,height=1000,res=300)
+ggarrange(top_ASV_WAT_SED_merged_06WAT,top_ASV_WAT_SED_merged+rremove("ylab")+rremove("y.text"),widths = c(2,10))
+#dev.off()
+
+
+
+#png("Figures_final/F1c_top_ASV40_WAT_SED_merged_for_legend_5.png",width=4000,height=1000,res=300)
+
+top_ASV_WAT_SED_merged_ASV40=ggplot(ps_FE_P_merge_1_output_reshape_2,aes(x=time,y=percentage,fill=ASV40))+labs(y = "% total reads")+theme_bw()+facet_grid(~source)+geom_area(position="stack",stat ='identity',alpha=0.6)+
+  geom_line(position='stack',aes(color=ASV40))+scale_color_manual(values=ASV40Palette,guide=guide_legend(ncol=6))+
+  scale_x_continuous(breaks=c(6,14,24,47,72,110,144,216))+scale_fill_manual(values= ASV40Palette,guide=guide_legend(ncol=6))
+#top_ASV_WAT_SED_merged_ASV40+theme(text = element_text(size = 18))
+#dev.off()
+
+
+
+
+
+
+
+```
+##Import cell count, OD, and DOC
+```{r}
+WAT_SED_cc=read.csv('151005_resequence/dada2/WAT_SED_cell_count_new.csv',row.names = 1)
+WAT_SED_OD=read.csv('151005_resequence/dada2/WAT_SED_OD.csv',row.names = 1)
+WAT_SED_DOC=read.csv('151005_resequence/dada2/WAT_SED_DOC.csv',row.names = 1)
+
+WAT_SED_cc$source=sapply(strsplit(rownames(WAT_SED_cc), "-"), `[`, 4)
+WAT_SED_cc$time=sapply(strsplit(rownames(WAT_SED_cc), "-"), `[`, 5)
+WAT_SED_cc$source1=substr(WAT_SED_cc$source,1,3)
+WAT_SED_cc$replicate=substr(WAT_SED_cc$source,4,4)
+WAT_SED_cc$time=as.numeric(WAT_SED_cc$time)
+
+WAT_SED_DOC$source=sapply(strsplit(rownames(WAT_SED_DOC), "-"), `[`, 4)
+WAT_SED_DOC$time=sapply(strsplit(rownames(WAT_SED_DOC), "-"), `[`, 5)
+WAT_SED_DOC$source1=substr(WAT_SED_DOC$source,1,3)
+WAT_SED_DOC$replicate=substr(WAT_SED_DOC$source,4,4)
+WAT_SED_DOC$time=as.numeric(WAT_SED_DOC$time)
+head(WAT_SED_cc)
+
+WAT_SED_cc_agg=WAT_SED_cc %>% group_by(source1,time) %>% 
+  summarise(mean_cc=mean(cc,na.rm=T),sd_cc=sd(cc,na.rm=T))
+#  ddply(WAT_SED_cc, .(source1,time),
+#                                 summarize, mean_cc = #mean(cc,na.rm=T),sd_cc=sd(cc,na.rm=T))
+WAT_SED_cc_agg$source1=factor(WAT_SED_cc_agg$source1,levels=c('WAT','SED'))
+
+
+WAT_SED_DOC_agg=WAT_SED_DOC %>% group_by(source1,time) %>%
+  summarise(mean_DOC =mean(DOC,na.rm=T),sd_DOC=sd(DOC,na.rm=T))
+#  ddply(WAT_SED_DOC, .(source1,time),
+#                                 summarize, mean_DOC = #mean(DOC,na.rm=T),sd_DOC=sd(DOC,na.rm=T))
+WAT_SED_DOC_agg$source1=factor(WAT_SED_DOC_agg$source1,levels=c('WAT','SED'))
+
+WAT_SED_cc_DOC_agg=data.frame(cbind(WAT_SED_cc_agg,WAT_SED_DOC_agg[,3:4]))
+#for plotting purposes we need to scale the DOC data, since it can only be plotted on the primary axis scales but will be read off the secondary axis
+WAT_SED_cc_DOC_agg$source1=gsub('WAT','Seawater',WAT_SED_cc_DOC_agg$source1)
+WAT_SED_cc_DOC_agg$source1=gsub('SED','Sediment',WAT_SED_cc_DOC_agg$source1)
+
+cc_growth=ggplot(data=WAT_SED_cc_DOC_agg)+geom_line(aes(y=mean_cc, x=time))+geom_point(aes(y=mean_cc, x=time))+facet_grid(~source1)+ xlim(0,220)+scale_x_continuous(breaks=c(6,14,24,47,72,110,144,216))+scale_y_continuous(trans='log10')+
+  geom_errorbar(aes(ymax = mean_cc + sd_cc, ymin = mean_cc-sd_cc,x=time),position =position_dodge(0.6), width=0,color=alpha('black',0.5))+theme_bw()+
+  xlab('Time (h)')+ylab('Cells/mL')
+
+cc_DOC_growth=cc_growth+geom_line(aes(y=(mean_DOC+80)*1.25*10^7, x=time),linetype='dashed',color='firebrick2') +
+  
+  geom_errorbar(aes(ymax = (mean_DOC + sd_DOC+80)*1.25*10^7, ymin = (mean_DOC-sd_DOC+80)*1.25*10^7,x=time),color='firebrick2',
+                position =position_dodge(0.6), width=0)+ylim(0,10^9)+
+  geom_point(aes(y=(mean_DOC+80)*1.25*10^7, x=time),pch=2,color='firebrick2')+facet_grid(~source1)+
+  scale_y_continuous(sec.axis = sec_axis(~./(1.25*10^7)-80, name = expression(paste(Delta~"DOC (mg/L)"))))+
+  theme(axis.text=element_text(color = "black"),axis.line.y.right = element_line(color = "firebrick2"), axis.ticks.y.right = element_line(color = "firebrick2"),axis.text.y.right = element_text(color = "firebrick2"),
+         axis.title.y.right = element_text(color = "firebrick2"),axis.title.x = element_blank(),
+         axis.text.x = element_blank(),axis.ticks.x=element_blank())
+
+#png("Figures_final/F1b_orginial_growth_curves_DOC_cc.png",width=3250,height=550,res=300)
+cc_DOC_growth+theme(text = element_text(size = 17))
+#dev.off()
+
+
+
+
+```
+#COM stuff
+
+```{r}
+
+WAT_SED_cc_reread=read.csv('151005_resequence/dada2/WAT_SED_cell_count_new.csv',row.names = 1)  #the old WAT_SED_cc has been incorporated with metadata
+WAT_SED_cc_match=WAT_SED_cc_reread[match(sample_names(ps_FE_P),rownames(WAT_SED_cc_reread)),]
+ps_FE_WAT_SED_otu_cc=sweep(otu_table(ps_FE_P),1, WAT_SED_cc_match,'*')
+ps_FE_WAT_SED_cc=phyloseq(otu_table(ps_FE_WAT_SED_otu_cc, taxa_are_rows=FALSE), 
+                          sample_data(ps_FE_P), 
+                          tax_table(ps_FE_P))
+sample_data(ps_FE_WAT_SED_cc)$rep <- substr(sample_data(ps_FE_WAT_SED_cc)$source_rep,9,9)
+ps_FE_WAT_SED_cc_1=transform_sample_counts(ps_FE_WAT_SED_cc,function(x) x/100)
+
+ps_FE_WAT_SED_cc_merge=merge_samples(ps_FE_WAT_SED_cc,"source1_time") #there is a bug in the merge_samples function that it can only calculate sums
+
+sample_data(ps_FE_WAT_SED_cc_merge)$time <- substr(sample_names(ps_FE_WAT_SED_cc_merge),9,12)
+sample_data(ps_FE_WAT_SED_cc_merge)$source <- substr(sample_names(ps_FE_WAT_SED_cc_merge),1,8)
+ps_FE_WAT_SED_cc_merge=subset_samples(ps_FE_WAT_SED_cc_merge,!time=='000')
+ps_FE_P_merge_no0=subset_samples(ps_FE_P_merge,!time=='000')
+
+
+
+ps_FE_WAT_SED_cc_merge_otu = sweep(otu_table(ps_FE_WAT_SED_cc_merge),1,sample_sums(ps_FE_P_merge_no0),"/")  #renormalize so that it is actually mean
+ps_FE_WAT_SED_cc_merge_1=phyloseq(otu_table(ps_FE_WAT_SED_cc_merge_otu,taxa_are_rows = FALSE),sample_data(ps_FE_WAT_SED_cc_merge), 
+                                  tax_table(ps_FE_WAT_SED_cc_merge))
+
+ps_FE_WAT_cc_merge=subset_samples(ps_FE_WAT_SED_cc_merge_1,source=='Seawater')
+ps_FE_SED_cc_merge=subset_samples(ps_FE_WAT_SED_cc_merge_1,source=='Sediment')
+
+list_ASVs=tax_table(ps_FE_WAT_SED_cc_merge_1)[,"ASV"]
+list_family=tax_table(ps_FE_WAT_SED_cc_merge_1)[,"Family"]
+ASV_family_match=tax_table(ps_FE_WAT_SED_cc_merge_1)[,c("ASV","Family")]
+
+otu_ps_FE_WAT_cc_merge=as.data.frame(otu_table(ps_FE_WAT_cc_merge))
+names(otu_ps_FE_WAT_cc_merge)=list_ASVs
+
+#remove ASVs with total count 0
+otu_ps_FE_WAT_cc_merge[,colSums(otu_ps_FE_WAT_cc_merge)==0]=NULL
+##add time as a column
+otu_ps_FE_WAT_cc_merge$time=as.numeric(sample_data(ps_FE_WAT_cc_merge)$time)
+
+##melt to long format 
+reshape_otu_ps_FE_WAT_cc_merge=melt(otu_ps_FE_WAT_cc_merge,id='time')
+names(reshape_otu_ps_FE_WAT_cc_merge)[2]='ASV'
+names(reshape_otu_ps_FE_WAT_cc_merge)[3]='cc'
+
+##Calculate center of mass
+#detach(package:plyr)
+reshape_otu_ps_FE_WAT_cc_merge_COM=reshape_otu_ps_FE_WAT_cc_merge %>% group_by(ASV) %>% filter(max(cc)>10^3)%>% summarise(COM_log=sum(cc*log(time))/sum(cc),COM=sum(cc*time)/sum(cc))
+
+
+COM_log_hist_WAT=ggplot(reshape_otu_ps_FE_WAT_cc_merge_COM, aes(x=COM_log, y=..density..)) +geom_histogram(binwidth = 0.1,fill='#209af7',alpha=0.3)+theme_bw()+
+  stat_density(geom="line",adjust=0.6)+labs(y='ASV density')+
+  scale_x_continuous(expand = c(0, 0))+
+  scale_y_continuous(expand = c(0, 0))+xlim(2,6)+
+  theme(axis.text=element_text(color = "black"),axis.text.x = element_blank(),axis.ticks = element_blank(),axis.title.x = element_blank(),axis.title.y = element_text(size=24),axis.text.y = element_text(size=18,color='black'))+geom_vline(xintercept = 4.6,color='grey70',width=3)
+
+
+#png('Figures_compiled/COM_log_hist_WAT.png',width = 1000,height=500,res=300)
+COM_log_hist_WAT
+#dev.off()
+
+otu_ps_FE_SED_cc_merge=as.data.frame(otu_table(ps_FE_SED_cc_merge))
+names(otu_ps_FE_SED_cc_merge)=list_ASVs
+
+#remove ASVs with total count 0
+otu_ps_FE_SED_cc_merge[,colSums(otu_ps_FE_SED_cc_merge)==0]=NULL
+##add time as a column
+otu_ps_FE_SED_cc_merge$time=as.numeric(sample_data(ps_FE_SED_cc_merge)$time)
+
+##melt to long format 
+reshape_otu_ps_FE_SED_cc_merge=melt(otu_ps_FE_SED_cc_merge,id='time')
+names(reshape_otu_ps_FE_SED_cc_merge)[2]='ASV'
+names(reshape_otu_ps_FE_SED_cc_merge)[3]='cc'
+
+##Calculate center of mass
+
+reshape_otu_ps_FE_SED_cc_merge_COM=reshape_otu_ps_FE_SED_cc_merge %>% group_by(ASV) %>% filter(max(cc)>10^3)%>% summarise(COM_log=sum(cc*log(time))/sum(cc),COM=sum(cc*time)/sum(cc))
+
+COM_log_hist_SED=ggplot(reshape_otu_ps_FE_SED_cc_merge_COM, aes(x=COM_log, y=..density..)) +geom_histogram(binwidth = 0.1,fill='darkgoldenrod4',alpha=0.3)+theme_bw()+
+  stat_density(geom="line",adjust=0.6)+labs(y='ASV density')+
+  scale_x_continuous(expand = c(0, 0))+ scale_y_continuous(expand = c(0, 0),position = 'right')+xlim(2,6)+
+  theme(axis.text.x = element_blank(),axis.ticks = element_blank(),
+        axis.title.x = element_blank(),axis.title.y = element_text(size=24),axis.text.y = element_text(size=18,color="black"))+geom_vline(xintercept = 4.5,color='grey70',width=3)
+
+#png('Figures_compiled/COM_log_hist_SED.png',width = 1000,height=600,res=300)
+COM_log_hist_SED
+#dev.off()
+
+#png('Figures_final/F1d_COM_WAT_SED_log_hist.png',width=2800,height=1200,res=300)
+ggarrange(COM_log_hist_WAT,COM_log_hist_SED,ncol=2)
+#dev.off()
+
+```
+
+#Within and between Family correlations
+```{r,eval=FALSE}
+##WAT
+##normalize each ASV so its sum over time is 1
+reshape_otu_ps_FE_WAT_cc_merge_norm=reshape_otu_ps_FE_WAT_cc_merge %>% group_by(ASV) %>%
+                                      mutate(norm_cc=cc/sum(cc))
+reshape_otu_ps_FE_WAT_cc_merge_norm=merge(reshape_otu_ps_FE_WAT_cc_merge_norm,ASV_family_match,by='ASV',all.x=T)
+
+unique_list_family=as.vector(unique(list_family))
+unique_list_family=unique_list_family[!is.na(unique_list_family)]  #this omits the families that cannot be assigned
+max_reshape_otu_ps_FE_WAT_cc_merge_norm=reshape_otu_ps_FE_WAT_cc_merge_norm %>% group_by(ASV) %>% filter(max(cc)>10^3)
+
+cor_list=list()
+for (i in 1:length(unique_list_family)){
+  subset=max_reshape_otu_ps_FE_WAT_cc_merge_norm[grep(unique_list_family[i],max_reshape_otu_ps_FE_WAT_cc_merge_norm$Family),]
+  subsetcc=matrix(subset$norm_cc,nrow = 8,byrow = F)
+  if (ncol(subsetcc)>0){
+    cor_list[[i]]=cor(subsetcc)
+  }
+  
+}
+cor_list_1=unlist(cor_list)
+
+
+allcc=matrix(max_reshape_otu_ps_FE_WAT_cc_merge_norm$norm_cc,nrow=8,byrow = F)  #this is so that each column represents a series of time points
+cor_allcc=cor(allcc)
+cor_allcc=matrix(cor_allcc,ncol = 1)
+
+
+cor_list_1=as.data.frame(cor_list_1)
+cor_allcc=as.data.frame(cor_allcc)
+
+cor_list_nf=data.frame(cor_allcc)
+for (i in 1:nrow(cor_list_1)){
+  cor_list_nf=as.data.frame(cor_list_nf[-match(cor_list_1[i,1],cor_list_nf[,1]),])
+}
+names(cor_list_nf)='cor_list_1'
+WAT_corr_list=lst(cor_list_1,cor_list_nf)
+WAT_corr_all=bind_rows(WAT_corr_list,.id='id')
+WAT_corr_f_nf=ggplot(data = WAT_corr_all, aes(x = cor_list_1,y=..scaled..,color=id,fill=id),adjust=2,
+               position = 'identity')+geom_density(alpha=0.3) + 
+               scale_color_manual(values=c('coral1','grey70'),labels=c('Within Family', 'In different Families'),name='ASV group')+
+               scale_fill_manual(values=c('coral1','grey70'),labels=c('Within Family', 'In different Families'),name='ASV group')+
+               labs(x = "Correlation of growth",title='Seawater inoculated',y='Density')
+
+wilcox.test(cor_list_1[,1],cor_list_nf[,1])
+length(cor_list_1[,1])
+length(cor_list_nf[,1])
+
+#png('Figures_compiled/WAT_corr_f_nf.png',width=1800,height=900,res=300)
+WAT_corr_f_nf=WAT_corr_f_nf+theme(element_text(size=20))+theme_classic()
+#dev.off()
+
+##SED
+##normalize each ASV so its sum over time is 1
+reshape_otu_ps_FE_SED_cc_merge_norm=reshape_otu_ps_FE_SED_cc_merge %>% group_by(ASV) %>% 
+                                      mutate(norm_cc=cc/sum(cc))
+
+reshape_otu_ps_FE_SED_cc_merge_norm=merge(reshape_otu_ps_FE_SED_cc_merge_norm,ASV_family_match,by='ASV',all.x=T)
+
+unique_list_family=as.vector(unique(list_family))
+unique_list_family=unique_list_family[!is.na(unique_list_family)]  #this omits the families that cannot be assigned
+max_reshape_otu_ps_FE_SED_cc_merge_norm=reshape_otu_ps_FE_SED_cc_merge_norm %>% group_by(ASV) %>% filter(max(cc)>10^3)  #only select ASVs that growth to >10^3/mL
+
+cor_list=list()
+for (i in 1:length(unique_list_family)){
+  subset=max_reshape_otu_ps_FE_SED_cc_merge_norm[grep(unique_list_family[i],max_reshape_otu_ps_FE_SED_cc_merge_norm$Family),]
+  subsetcc=matrix(subset$norm_cc,nrow = 8,byrow = F)
+  if (ncol(subsetcc)>0){
+    cor_list[[i]]=cor(subsetcc)
+  }
+  
+}
+cor_list_1=unlist(cor_list)
+
+
+allcc=matrix(max_reshape_otu_ps_FE_SED_cc_merge_norm$norm_cc,nrow=8,byrow = F)  #this is so that each column represents a series of time points
+cor_allcc=cor(allcc)
+cor_allcc=matrix(cor_allcc,ncol = 1)
+
+
+cor_list_1=as.data.frame(cor_list_1)
+cor_allcc=as.data.frame(cor_allcc)
+
+cor_list_nf=data.frame(cor_allcc)
+for (i in 1:nrow(cor_list_1)){
+  cor_list_nf=as.data.frame(cor_list_nf[-match(cor_list_1[i,1],cor_list_nf[,1]),])
+}
+names(cor_list_nf)='cor_list_1'
+SED_corr_list=lst(cor_list_1,cor_list_nf)
+SED_corr_all=bind_rows(SED_corr_list,.id='id')
+SED_corr_f_nf=ggplot(data = SED_corr_all, aes(x = cor_list_1,y=..scaled..,color=id,fill=id),adjust=2,
+               position = 'identity')+geom_density(alpha=0.3) + 
+               scale_color_manual(values=c('coral1','grey70'),labels=c('Within Family', 'In different Families'),name='ASV group')+
+               scale_fill_manual(values=c('coral1','grey70'),labels=c('Within Family', 'In different Families'),name='ASV group')+
+               labs(x = "Correlation of growth",title='Sediment inoculated',y='Density')
+
+
+length(cor_list_1[,1])
+length(cor_list_nf[,1])
+wilcox.test(cor_list_1[,1],cor_list_nf[,1])
+
+
+#png('Figures_compiled/SED_corr_f_nf.png',width=1800,height=900,res=300)
+SED_corr_f_nf=SED_corr_f_nf+theme(element_text(size=20))+
+                    theme_classic() 
+#dev.off()
+
+#png('Figures_final/S3_WAT_SED_corr_f_nf.png',width=2000,height=800,res=300)
+ggarrange(WAT_corr_f_nf,SED_corr_f_nf,labels=c("a","b"),common.legend = T,legend="bottom")
+#dev.off()
+
+
+
+```
+
+
+
+
+##import data from reconstituted communities 
+
+```{r,warning=FALSE}
+
+otu_FE_11strains=as.data.frame(readRDS('crossfeeding/reconstitute/seqtab_rm_chimera.rds'))
+tax_table_11strains=readRDS('crossfeeding/reconstitute/taxa_species.rds')
+plate_sample_match=read.csv('crossfeeding/reconstitute/plate_location_sample_name.csv',row.names = 1)
+seq_11strains_ASV_new=read.csv('crossfeeding/reconstitute/sequences_11strains_ASV_new.csv',row.names = 1)
+
+
+
+otu_FE_11strains=merge(plate_sample_match,otu_FE_11strains,by=0)
+rownames(otu_FE_11strains)=otu_FE_11strains$Name
+otu_FE_11strains$Row.names=NULL
+otu_FE_11strains$Name=NULL
+
+tax_table_11strains=tax_table_11strains %>% mutate(Genus=case_when(is.na(Genus.y)~Genus.x, TRUE ~ Genus.y))
+
+tax_table_11strains$Genus.x=NULL
+tax_table_11strains$Genus.y=NULL
+n=ncol(tax_table_11strains)
+tax_table_11strains[,c(n,n-1)]=tax_table_11strains[,c(n-1,n)]
+names(tax_table_11strains)[c(n,n-1)]=names(tax_table_11strains)[c(n-1,n)]
+tax_table_11strains$ASV=paste0(tax_table_11strains$Genus,rownames(tax_table_11strains),'new')
+rownames(tax_table_11strains)=tax_table_11strains$Row.names
+tax_table_11strains$Row.names=NULL
+tax_table_11strains=merge(tax_table_11strains,seq_11strains_ASV_new,by=0,all=T)
+rownames(tax_table_11strains)=tax_table_11strains$Row.names
+tax_table_11strains$Row.names=NULL
+tax_table_11strains$ASV11<-tax_table_11strains$ASV11_new
+tax_table_11strains$ASV11_new=NULL
+
+tax_table_11strains_table=as.matrix(tax_table_11strains)
+
+##Construct Phyloseq object
+metadata = rownames(otu_FE_11strains)
+source=sapply(strsplit(metadata, "_"), `[`,3)
+time=sapply(strsplit(metadata, "_"), `[`, 2)
+rep=sapply(strsplit(metadata, "_"), `[`, 4)
+source_rep=paste0(source,'_', rep)
+source_time=paste0(source,'_',time)
+
+metadata_FE_11strains <- data.frame(source=source, time=time,rep=rep,source_rep=source_rep,source_time=source_time)
+rownames(metadata_FE_11strains)=rownames(otu_FE_11strains)
+
+ps_11strains = phyloseq(otu_table(otu_FE_11strains, taxa_are_rows=FALSE), 
+                        sample_data(metadata_FE_11strains), 
+                        tax_table(tax_table_11strains_table))
+
+##Quality control and rarefy
+############FE#######################################
+ps_11strains_1 = prune_samples(time!= "ncnc", ps_11strains)
+ps_11strains_nc = prune_samples(time %in% c("ncnc"), ps_11strains)  #all negative controls have very low read numbers so just ignore
+ps_11strains_1= prune_samples(sample_sums(ps_11strains_1) > 3000, ps_11strains_1)
+ps_11strains_1 = filter_taxa(ps_11strains_1, function(x) sum(x > 3) > (0.1*length(x)), TRUE)  #Remove taxa not seen more than 3 times in at least 10% of the samples.
+
+#For simplicity currently I am just removing all sequences that do not belong to what I put in
+ps_11strains_1=subset_taxa(ps_11strains_1,ASV11!='NA')
+
+ps_11strains_r = rarefy_even_depth(ps_11strains_1, sample.size = min(sample_sums(ps_11strains_1)),rngseed = T)
+
+ps_11strains_P = transform_sample_counts(ps_11strains_r, function(x) 100 * x/sum(x))
+
+#mixture_cell_count.csv is from 11strains_fresh_media_redo.xls, which is from 071618_sw_mixed_isolates_all_10XD(1).csv
+#I believe that this sample does not suffer from the undercounting problem b/c DAPI was mixed into the fixing buffer;
+#Also, in these samples bacteria/total events ratio was >85% in most wells, meaning that we are not having gating problems
+#The cell count also correspond well with OD (6*10^7--OD 0.03)
+
+mixed_11strains_cc=read.csv('crossfeeding/reconstitute/mixture_cell_count.csv',row.names = 1)
+mixed_11strains_cc_match=mixed_11strains_cc[match(sample_names(ps_11strains_P),rownames(mixed_11strains_cc)),]
+ps_11strains_otu_cc=sweep(otu_table(ps_11strains_P)/100,1, mixed_11strains_cc_match,'*')
+ps_11strains_P_cc=phyloseq(otu_table(ps_11strains_otu_cc, taxa_are_rows=FALSE), 
+                          sample_data(ps_11strains_P), 
+                          tax_table(ps_11strains_P))
+
+
+ps_11strains_P_cc_100=subset_samples(ps_11strains_P_cc,source=='isolate-mix-100-fold')
+ps_11strains_P_cc_ratio=subset_samples(ps_11strains_P_cc,source=='isolate-mix-seawater-ratio')
+
+
+ps_FE_cc_11strains_cc=merge_phyloseq(ps_11strains_P_cc_ratio,ps_FE_WAT_SED_cc_1)
+tax_table(ps_FE_cc_11strains_cc)[is.na(tax_table(ps_FE_cc_11strains_cc)[,'ASV40']),'ASV40']='Other ASVs'
+
+######Export out of phyloseq for stacked area plot in ggplot2
+ASV11_list=as.vector(tax_table(ps_FE_cc_11strains_cc)[,'ASV11'])
+ASV11_list[is.na(ASV11_list)]='Other'
+
+#OTU table with only 11 strains
+export_FE_cc_11strains_cc=as.data.frame(otu_table(ps_FE_cc_11strains_cc))
+names(export_FE_cc_11strains_cc)=ASV11_list
+export_FE_cc_11strains_cc$Other_ASVs=rowSums(export_FE_cc_11strains_cc[,names(export_FE_cc_11strains_cc)=='Other'])
+export_FE_cc_11strains_cc[,names(export_FE_cc_11strains_cc)=='Other']=NULL
+
+
+#add in factors
+export_FE_cc_11strains_cc$source=sample_data(ps_FE_cc_11strains_cc)$source
+export_FE_cc_11strains_cc$time=sample_data(ps_FE_cc_11strains_cc)$time
+export_FE_cc_11strains_cc$time=as.numeric(as.character(export_FE_cc_11strains_cc$time))
+export_FE_cc_11strains_cc$rep=sample_data(ps_FE_cc_11strains_cc)$rep
+
+#melt to long format
+reshape_export_FE_cc_11strains_cc=melt(export_FE_cc_11strains_cc,id=c('source','time','rep'))
+names(reshape_export_FE_cc_11strains_cc)[4]='ASV11'
+names(reshape_export_FE_cc_11strains_cc)[5]='cc'
+
+##calculate mean and variance  #start of reshape_export_FE_cc_11strains_cc_merge
+reshape_export_FE_cc_11strains_cc_merge=reshape_export_FE_cc_11strains_cc %>% group_by(source,time,ASV11) %>% summarise(mean_cc=mean(cc,na.rm = T),sd_cc=sd(cc,na.rm = T)) 
+
+reshape_export_FE_cc_11strains_cc_merge=reshape_export_FE_cc_11strains_cc_merge %>% filter(time!=0)
+reshape_export_FE_cc_11strains_cc_merge=as.data.frame(reshape_export_FE_cc_11strains_cc_merge)
+
+##incorporate inoculation data & order factors 
+inoculum_FE_11strains=read.csv('crossfeeding/reconstitute/inoculum_mix_long_format.csv')  #This file was manually corrected to account for the mistake I had of taking a Psy14 as a Psy9
+inoculum_FE_11strains$ASV11=ASV11_swap(inoculum_FE_11strains$ASV11)
+
+reshape_export_FE_cc_11strains_cc_merge=rbind(reshape_export_FE_cc_11strains_cc_merge,inoculum_FE_11strains[,c(1:3,6:7)])
+reshape_export_FE_cc_11strains_cc_merge$ASV11=as.character(reshape_export_FE_cc_11strains_cc_merge$ASV11)
+reshape_export_FE_cc_11strains_cc_merge=dplyr::arrange(reshape_export_FE_cc_11strains_cc_merge,ASV11)
+reshape_export_FE_cc_11strains_cc_merge$ASV11=as.factor(reshape_export_FE_cc_11strains_cc_merge$ASV11)
+
+oa=which(levels(reshape_export_FE_cc_11strains_cc_merge$ASV11)=='Other_ASVs')
+reshape_export_FE_cc_11strains_cc_merge$ASV11<- factor(reshape_export_FE_cc_11strains_cc_merge$ASV11, 
+                                                     levels = c(levels(reshape_export_FE_cc_11strains_cc_merge$ASV11)[1:(oa-1)],                                                                levels(reshape_export_FE_cc_11strains_cc_merge$ASV11)[(oa+1):12],                                                               levels(reshape_export_FE_cc_11strains_cc_merge$ASV11)[oa]))
+reshape_export_FE_cc_11strains_cc_merge = reshape_export_FE_cc_11strains_cc_merge %>% filter(source != "isolate-mix-100-fold")
+reshape_export_FE_cc_11strains_cc_merge$source=as.factor(reshape_export_FE_cc_11strains_cc_merge$source)
+  
+reshape_export_FE_cc_11strains_cc_merge=reshape_export_FE_cc_11strains_cc_merge %>% filter(!is.na(source) & !ASV11 %in% c('Alteromonadaceae12','Oceanospirillaceae6'))
+
+reshape_export_FE_cc_11strains_cc_merge_no_others=reshape_export_FE_cc_11strains_cc_merge[reshape_export_FE_cc_11strains_cc_merge$ASV11!='Other_ASVs',]
+
+
+```
+##correlation between replicates for 
+```{r}
+reshape_export_FE_cc_11strains_cc_isolate_only=reshape_export_FE_cc_11strains_cc %>%
+  filter(source=='isolate-mix-seawater-ratio') %>% filter(time!=0) %>%
+  filter(!(ASV11 %in% c('Psychromonas9','Other_ASVs'))) %>%
+  group_by(ASV11,rep) %>% arrange(time) %>% filter(time<=144) %>% mutate(category=case_when(ASV11 %in% ASV11list_early ~ 'Early', TRUE ~ 'Late'))
+
+reshape_export_FE_cc_11strains_cc_isolate_only_summarize=reshape_export_FE_cc_11strains_cc_isolate_only %>% group_by(rep,time,category) %>% summarise(sum_cc=sum(cc))
+
+time_list=c('Early','Late')
+time_cor_list=list()
+for (i in 1:length(time_list)){
+  stime=time_list[i]
+  reshape_export_FE_cc_11strains_cc_isolate_only_summarize_s=reshape_export_FE_cc_11strains_cc_isolate_only_summarize %>% filter(category==stime)
+reshape_export_FE_cc_11strains_cc_isolate_only_summarize_1=reshape_export_FE_cc_11strains_cc_isolate_only_summarize_s %>% filter(rep=='1')
+reshape_export_FE_cc_11strains_cc_isolate_only_summarize_2=reshape_export_FE_cc_11strains_cc_isolate_only_summarize_s %>% filter(rep=='2')
+reshape_export_FE_cc_11strains_cc_isolate_only_summarize_3=reshape_export_FE_cc_11strains_cc_isolate_only_summarize_s %>% filter(rep=='3')
+
+c1=cor(reshape_export_FE_cc_11strains_cc_isolate_only_summarize_1$sum_cc,
+    reshape_export_FE_cc_11strains_cc_isolate_only_summarize_2$sum_cc)
+c2=cor(reshape_export_FE_cc_11strains_cc_isolate_only_summarize_1$sum_cc,
+    reshape_export_FE_cc_11strains_cc_isolate_only_summarize_3$sum_cc)
+c3=cor(reshape_export_FE_cc_11strains_cc_isolate_only_summarize_2$sum_cc,
+    reshape_export_FE_cc_11strains_cc_isolate_only_summarize_3$sum_cc)
+cor_df=data.frame(category=stime,c1=c1,c2=c2,c3=c3)
+time_cor_list[[i]]=cor_df
+}
+
+time_cor_df=bind_rows(time_cor_list)
+time_cor_df_melt=melt(time_cor_df)
+
+pcorr=ggplot(time_cor_df_melt,aes(x=category,y=value,col=variable))+
+  geom_point(size=4)+
+  scale_color_brewer(palette = 'Paired',labels = c("Rep1 and Rep2", "Rep1 and Rep3", "Rep2 and Rep3"))+theme_bw()+
+  labs(color="replicate pairs",y="Spearman's correlation",x='')+ylim(c(0,1))
+
+#png('Figures_final/S4_isolate_mix_replicate_correlation.png',width=1200,height=1200,res=300)
+pcorr
+#dev.off()
+
+
+ASV_list=unique(reshape_export_FE_cc_11strains_cc_isolate_only$ASV11)
+
+ASV_cor_list=list()
+for (i in 1:length(ASV_list)){
+  sASV=ASV_list[i]
+  reshape_export_FE_cc_11strains_cc_isolate_only_summarize=reshape_export_FE_cc_11strains_cc_isolate_only %>% filter(ASV11==sASV)
+reshape_export_FE_cc_11strains_cc_isolate_only_summarize_1=reshape_export_FE_cc_11strains_cc_isolate_only_summarize %>% filter(rep=='1')
+reshape_export_FE_cc_11strains_cc_isolate_only_summarize_2=reshape_export_FE_cc_11strains_cc_isolate_only_summarize %>% filter(rep=='2')
+reshape_export_FE_cc_11strains_cc_isolate_only_summarize_3=reshape_export_FE_cc_11strains_cc_isolate_only_summarize %>% filter(rep=='3')
+
+c1=cor(reshape_export_FE_cc_11strains_cc_isolate_only_summarize_1$cc,
+    reshape_export_FE_cc_11strains_cc_isolate_only_summarize_2$cc)
+c2=cor(reshape_export_FE_cc_11strains_cc_isolate_only_summarize_1$cc,
+    reshape_export_FE_cc_11strains_cc_isolate_only_summarize_3$cc)
+c3=cor(reshape_export_FE_cc_11strains_cc_isolate_only_summarize_2$cc,
+    reshape_export_FE_cc_11strains_cc_isolate_only_summarize_3$cc)
+cor_df=data.frame(ASV11=sASV,c1=c1,c2=c2,c3=c3)
+ASV_cor_list[[i]]=cor_df
+}
+
+ASV_cor_df=bind_rows(ASV_cor_list)
+ASV_cor_df_melt=melt(ASV_cor_df)
+
+pcorr=ggplot(ASV_cor_df_melt,aes(x=value,fill=variable))+
+  geom_histogram()+
+  scale_fill_brewer(palette = 'PuBu',labels = c("Rep1 and Rep2", "Rep1 and Rep3", "Rep2 and Rep3"))+theme_bw()+
+  labs(fill="correlation",x="Spearman's correlation")
+
+#png('Figures_final/S4_isolate_mix_replicate_correlation.png',width=1200,height=1200,res=300)
+pcorr
+#dev.off()
+
+
+```
+
+
+
+##Using COM as definition as early and late
+```{r}
+reshape_export_FE_cc_11strains_cc_merge_no_others_COM_prep=reshape_export_FE_cc_11strains_cc_merge_no_others %>% 
+filter(!time %in% c(168,192,120))
+reshape_export_FE_cc_11strains_cc_merge_no_others_COM_prep=reshape_export_FE_cc_11strains_cc_merge_no_others_COM_prep %>%
+                                                           mutate(time = replace(time, time==0, 0.01))
+  
+reshape_export_FE_cc_11strains_cc_merge_no_others_COM=reshape_export_FE_cc_11strains_cc_merge_no_others_COM_prep %>% group_by(source,ASV11) %>% 
+  summarise(COM_log=sum(mean_cc*log(time))/sum(mean_cc),COM=sum(mean_cc*time)/sum(mean_cc))
+
+reshape_export_FE_cc_11strains_cc_merge_no_others_COM=reshape_export_FE_cc_11strains_cc_merge_no_others_COM %>% group_by(source) %>% mutate(COM_log_norm=(COM_log-min(COM_log,na.rm=T))/(max(COM_log,na.rm=T)-min(COM_log,na.rm=T)))
+
+reshape_export_FE_cc_11strains_cc_merge_no_others_COM_WAT_SED=reshape_export_FE_cc_11strains_cc_merge_no_others_COM %>% filter(source %in% c('Seawater','Sediment'))
+
+reshape_export_FE_cc_11strains_cc_merge_no_others_COM_WAT=reshape_export_FE_cc_11strains_cc_merge_no_others_COM %>% filter(source %in% c('Seawater'))
+reshape_export_FE_cc_11strains_cc_merge_no_others_COM_SED=reshape_export_FE_cc_11strains_cc_merge_no_others_COM %>% filter(source %in% c('Sediment'))
+
+
+```
+
+##ASV11 color palette
+```{r}
+oa2=which(levels(reshape_export_FE_cc_11strains_cc_merge_no_others_COM_prep$ASV11) %in% c("Marinomonas6","Other_ASVs"))
+ASV11list_new=levels(reshape_export_FE_cc_11strains_cc_merge_no_others_COM_prep$ASV11)[-oa2]
+ASV11palette=c()
+for (i in ASV11list_new){
+  ASV11palette=c(ASV11palette,ASV40Palette[match(i,levels(ps_FE_P_merge_1_output_reshape_2$ASV40))])
+}
+ASV11palette=ASV11palette[!is.na(ASV11palette)]
+ASV11list_early=ASV11list_new[c(6,7,8,9,10)]
+ASV11list_late=ASV11list_new[c(1,2,3,4,5)]
+ASV11list_EL=c(ASV11list_late,ASV11list_early)
+early_spec = colorRampPalette(c("darkorchid", "white"))(6)
+late_spec = colorRampPalette(c("cyan4", "white"))(6)
+
+ASV11palette_EL=c()
+e=0
+l=0
+for (i in 1:length(ASV11list_EL)){
+
+  if (ASV11list_EL[i] %in% ASV11list_early){
+    
+    e=e+1
+    ASV11palette_EL=c(ASV11palette_EL,early_spec[e])
+  } 
+  if (ASV11list_EL[i] %in% ASV11list_late){
+    l=l+1
+    ASV11palette_EL=c(ASV11palette_EL,late_spec[l])
+  }
+}
+```
+
+
+
+#How much of the community does our selected ASVs represent?
+```{r}
+ASV_cc_early_SED_14=reshape_otu_ps_FE_SED_cc_merge %>% filter(time==14 & ASV %in% ASV11list_early)
+ASV_cc_SED_14=WAT_SED_cc_agg %>% filter( source1 =='SED' & time==14)
+sum(ASV_cc_early_SED_14$cc)/ASV_cc_SED_14$mean_cc
+
+ASV_cc_early_WAT_14=reshape_otu_ps_FE_WAT_cc_merge %>% filter(time==14 & ASV %in% ASV11list_early)
+ASV_cc_WAT_14=WAT_SED_cc_agg %>% filter( source1 =='WAT' & time==14)
+sum(ASV_cc_early_WAT_14$cc)/ASV_cc_WAT_14$mean_cc
+
+ASV11list_family_late='Alteromonadaceae|Flavobacteriaceae|Halomonadaceae|Oceanospirillaceae|Rhodobacteraceae'
+
+ASV_cc_late_SED_216=reshape_otu_ps_FE_SED_cc_merge %>% filter(time==216 & ASV %in% ASV11list_late)
+ASV_cc_SED_216=WAT_SED_cc_agg %>% filter( source1 =='SED' & time==216)
+sum(ASV_cc_late_SED_216$cc)/ASV_cc_SED_216$mean_cc
+
+ASV_cc_late_WAT_216=reshape_otu_ps_FE_WAT_cc_merge %>% filter(time==216 & ASV %in% ASV11list_late)
+ASV_cc_WAT_216=WAT_SED_cc_agg %>% filter( source1 =='WAT' & time==216)
+sum(ASV_cc_late_WAT_216$cc)/ASV_cc_WAT_216$mean_cc
+
+reshape_otu_ps_FE_SED_cc_merge_F=merge(reshape_otu_ps_FE_SED_cc_merge,
+                                     ASV_family_match,by="ASV",all.x = T)
+
+family_cc_late_SED_216=reshape_otu_ps_FE_SED_cc_merge_F %>% filter(time==216 & grepl(ASV11list_family_late,Family))
+ASV_cc_SED_216=WAT_SED_cc_agg %>% filter( source1 =='SED' & time==216)
+sum(family_cc_late_SED_216$cc)/ASV_cc_SED_216$mean_cc
+
+reshape_otu_ps_FE_WAT_cc_merge_F=merge(reshape_otu_ps_FE_WAT_cc_merge,
+                                     ASV_family_match,by="ASV",all.x = T)
+family_cc_late_WAT_216=reshape_otu_ps_FE_WAT_cc_merge_F %>% filter(time==216 & grepl(ASV11list_family_late,Family))
+ASV_cc_WAT_216=WAT_SED_cc_agg %>% filter( source1 =='WAT' & time==216)
+sum(family_cc_late_WAT_216$cc)/ASV_cc_WAT_216$mean_cc
+
+```
+
+
+##Figure to describe selection criteria of the isolate strains 
+```{r,eval=FALSE}
+p_COM_log_no_legend=ggplot(reshape_export_FE_cc_11strains_cc_merge_no_others_COM_WAT_SED, aes(y=0,fill = ASV11, x=COM_log)) +
+  geom_jitter(aes(colour = ASV11),position=position_jitter(width=0, height=0.15),size=5,shape=19)+facet_wrap(~source,ncol=2)+theme_classic()+
+  scale_color_manual(values=ASV11palette,guide=guide_legend(ncol=1))+xlim(2,6)+ylim(-0.2,0.5)+labs(x = "COM(cell count*log(time))",y=NULL)+
+  theme(axis.text.y = element_blank(),strip.background = element_blank(),strip.text.x=element_blank(),legend.position = "none",axis.text.x = element_text(size=20),axis.title.x = element_text(size=20),axis.ticks.y=element_blank(),axis.line.y = element_blank())#+geom_vline(xintercept=4.5,color='grey60',lwd=2)
+
+p_COM_log_1=ggplot(reshape_export_FE_cc_11strains_cc_merge_no_others_COM_WAT_SED, aes(y=0,fill = ASV11, x=COM_log)) +
+  geom_jitter(aes(colour = ASV11),position=position_jitter(width=0, height=0.15),size=5,shape=19)+facet_wrap(~source,ncol=2)+theme_classic()+
+  scale_color_manual(values=ASV11palette,guide=guide_legend(ncol=1,byrow = T))+xlim(2,6)+ylim(-0.2,0.5)+labs(x = "COM(cell count*log(time))",y=NULL)+
+  theme(axis.text.y = element_blank(),strip.background = element_blank(),strip.text.x=element_blank(),legend.text = element_text(size = 20),axis.text.x = element_text(size=20),axis.title.x = element_text(size=20),axis.ticks.y=element_blank())+geom_vline(xintercept=4.5,color='grey60',lwd=2)
+
+
+#png('Figures_final/F1d_COM_WAT_SED_log_1.png',width=3200,height=700,res=300)
+p_COM_log_no_legend
+#dev.off()
+
+png('Figures_final/F1d_COM_WAT_SED_log_1_legend.png',width=1600,height=1500,res=300)
+p_COM_log_1
+dev.off()
+
+p_COM_log_no_legend_WAT=ggplot(reshape_export_FE_cc_11strains_cc_merge_no_others_COM_WAT, aes(y=0,fill = ASV11, x=COM_log)) +
+  geom_jitter(aes(colour = ASV11),position=position_jitter(width=0, height=0.15),size=5,shape=19)+facet_wrap(~source,ncol=2)+theme_classic()+
+  scale_color_manual(values=ASV11palette,guide=guide_legend(ncol=1))+xlim(2,6)+ylim(-0.2,0.5)+labs(x = "COM(cell count*log(time))",y=NULL)+
+  theme(axis.text.y = element_blank(),strip.background = element_blank(),strip.text.x=element_blank(),legend.position = "none",axis.text.x = element_text(size=20,color='black'),axis.title.x = element_text(size=20),axis.ticks.y=element_blank(),axis.line.y = element_blank())#+geom_vline(xintercept=4.5,color='grey60',lwd=2)
+
+p_COM_log_no_legend_SED=ggplot(reshape_export_FE_cc_11strains_cc_merge_no_others_COM_SED, aes(y=0,fill = ASV11, x=COM_log)) +
+  geom_jitter(aes(colour = ASV11),position=position_jitter(width=0, height=0.15),size=5,shape=19)+facet_wrap(~source,ncol=2)+theme_classic()+
+  scale_color_manual(values=ASV11palette,guide=guide_legend(ncol=1))+xlim(2,6)+ylim(-0.2,0.5)+labs(x = "COM(cell count*log(time))",y=NULL)+
+  theme(axis.text.y = element_blank(),strip.background = element_blank(),strip.text.x=element_blank(),legend.position = "none",axis.text.x = element_text(size=20,color='black'),axis.title.x = element_text(size=20),axis.ticks.y=element_blank(),axis.line.y = element_blank())#+geom_vline(xintercept=4.5,color='grey60',lwd=2)
+
+
+p_COM_log_WAT_merged=ggarrange(COM_log_hist_WAT,
+                           p_COM_log_no_legend_WAT,ncol = 1,align = 'v',heights = c(2,1))
+
+p_COM_log_SED_merged=ggarrange(COM_log_hist_SED,
+                           p_COM_log_no_legend_SED,ncol = 1,align = 'v',heights = c(2,1))
+
+png('Figures_final/F1d_COM_WAT_SED_log_merged.png',width=3000,height=1200,res=300)
+ggarrange(p_COM_log_WAT_merged,p_COM_log_SED_merged)
+dev.off()
+
+
+```
+
+##Import data for 10ASV
+```{r,warning=FALSE, message=FALSE}
+otu_all_5s_083019=as.data.frame(readRDS('crossfeeding/coexistance/succession_all/083019_reseq_11syncomm/seqtab_rm_chimera_083019.rds'))
+rownames(otu_all_5s_083019)=gsub('.fastq.gz','',rownames(otu_all_5s_083019))
+otu_all_5s_083019_11syncomm=otu_all_5s_083019[-grep('cyc8|cyc9',rownames(otu_all_5s_083019)),]
+
+tax_table_5s_083019=readRDS('crossfeeding/coexistance/succession_all/083019_reseq_11syncomm/taxa_species_083019.rds')
+seq_11strains_ASV_new=read.csv('crossfeeding/reconstitute/sequences_11strains_ASV_new.csv',row.names = 1)
+
+tax_table_5s_083019=tax_table_5s_083019 %>% mutate(Genus=case_when(is.na(Genus.y)~Genus.x, TRUE ~ Genus.y))
+tax_table_5s_083019$Genus.x=NULL
+tax_table_5s_083019$Genus.y=NULL
+n=ncol(tax_table_5s_083019)
+tax_table_5s_083019[,c(n,n-1)]=tax_table_5s_083019[,c(n-1,n)]
+names(tax_table_5s_083019)[c(n,n-1)]=names(tax_table_5s_083019)[c(n-1,n)]
+tax_table_5s_083019$ASV=paste0(tax_table_5s_083019$Genus,rownames(tax_table_5s_083019),'new')
+rownames(tax_table_5s_083019)=tax_table_5s_083019$Row.names
+tax_table_5s_083019$Row.names=NULL
+tax_table_5s_083019=merge(tax_table_5s_083019,seq_11strains_ASV_new,by=0,all=T)
+tax_table_5s_083019$ASV11=tax_table_5s_083019$ASV11_new
+tax_table_5s_083019$ASV11_new=NULL
+rownames(tax_table_5s_083019)=tax_table_5s_083019$Row.names
+tax_table_5s_083019$Row.names=NULL
+tax_table_5s_083019_table=as.matrix(tax_table_5s_083019)
+
+metadata_5s_083019_11syncomm=rownames(otu_all_5s_083019_11syncomm)
+comb_083019_11syncomm=unlist(lapply(lapply(strsplit(metadata_5s_083019_11syncomm, "-"),'[',1:11),function(x) paste(x,collapse = '-')))
+rep_083019_11syncomm=sapply(strsplit(metadata_5s_083019_11syncomm, "-"), `[`, 12)
+metadata_5s_083019_11syncomm <- data.frame(comb=comb_083019_11syncomm,rep=rep_083019_11syncomm)
+rownames(metadata_5s_083019_11syncomm)=rownames(otu_all_5s_083019_11syncomm)
+```
+
+
+#make phyloseq objects 
+```{r}
+ps_083019_11syncomm=phyloseq(otu_table(otu_all_5s_083019_11syncomm, taxa_are_rows=FALSE),sample_data(metadata_5s_083019_11syncomm), 
+              tax_table(tax_table_5s_083019_table))
+ps_083019_11syncomm=subset_taxa(ps_083019_11syncomm,!Order=='Rhizobiales')
+ps_083019_11syncomm=subset_samples(ps_083019_11syncomm,sample_sums(ps_083019_11syncomm)>100)
+ps_083019_11syncomm_P=transform_sample_counts(ps_083019_11syncomm, function(x) 100 * x/sum(x))
+ps_083019_11syncomm_P = filter_taxa(ps_083019_11syncomm_P, function(x) sum(x > 0.5) > 2, TRUE)
+#Remove taxa not seen more than 0.5% in at least 2 samples
+#also there is a taxa Vibrio9new that is likely some kind of sequence variant of Vib1, for simplicity I remove this taxa
+ps_083019_11syncomm_P=subset_taxa(ps_083019_11syncomm_P,!ASV=='Vibrio9new')
+#write.csv(otu_table(ps_083019_11syncomm_P),'otu_table_083019_11syncomm_P.csv')
+#write.csv(tax_table(ps_083019_11syncomm_P),'tax_table_083019_11syncomm_P.csv')
+
+```
+
+#Data for 10 strain mock community 
+```{r}
+matrix_measured_11syncomm=as.data.frame(otu_table(ps_083019_11syncomm_P))
+#Delete any rows that have less than 7 measured taxa--since communities were mixed with 10 strains this means there was something wrong with seqencing, etc
+matrix_measured_11syncomm=matrix_measured_11syncomm[apply(matrix_measured_11syncomm,1,function(x) sum(x>0)>8),]
+#I am arbitrarily reordering for the sake of simplicity
+#To check I have the ASV11 sequence correct
+test_taxa=as.data.frame(tax_table(ps_083019_11syncomm_P))["ASV11"]
+test_taxa[c(8,6,1,3,9,2,5,7,10,4),]
+matrix_measured_11syncomm=matrix_measured_11syncomm[,c(8,6,1,3,9,2,5,7,10,4)]
+matrix_measured_11syncomm$comb=unlist(lapply(lapply(strsplit(rownames(matrix_measured_11syncomm), "-"),'[',1:11),function(x) paste(x,collapse = '-')))
+matrix_measured_11syncomm_merge=matrix_measured_11syncomm %>% group_by(comb) %>% summarise_all(list(mean = mean, sd = sd))
+matrix_measured_11syncomm_merge$comb=NULL
+matrix_measured_11syncomm_merge=as.matrix(matrix_measured_11syncomm_merge)  #first 10 columns are mean, second 10 columns are sd
+matrix_theory_11syncomm=as.data.frame((matrix(unlist(strsplit(rownames(matrix_measured_11syncomm), "-")),ncol=12,byrow=T)))
+matrix_theory_11syncomm=matrix_theory_11syncomm[,1:11]
+matrix_theory_11syncomm=as.data.frame(apply(matrix_theory_11syncomm,2,as.numeric))
+matrix_theory_11syncomm$comb=unlist(lapply(lapply(strsplit(rownames(matrix_measured_11syncomm), "-"),'[',1:11),function(x) paste(x,collapse = '-')))
+
+matrix_theory_11syncomm_merge=matrix_theory_11syncomm %>% group_by(comb) %>% summarise_all(funs(mean))
+
+cell_counts_11syncomm=read.csv('crossfeeding/FACS/091719_11strains_mix_inoculate/11strains_inoculate_counts.csv',row.names = 1)
+matrix_theory_11syncomm_cell=sweep(matrix_theory_11syncomm_merge[,2:12],2,cell_counts_11syncomm$cell_counts,'*')
+matrix_theory_11syncomm_percentage=sweep(matrix_theory_11syncomm_cell,1,rowSums(matrix_theory_11syncomm_cell),'/')*100
+matrix_theory_11syncomm_percentage$V7=matrix_theory_11syncomm_percentage$V7+matrix_theory_11syncomm_percentage$V4
+matrix_theory_11syncomm_percentage$V4=NULL
+
+matrix_theory_11syncomm_percentage=t(matrix_theory_11syncomm_percentage)
+matrix_measured_11syncomm_merge=t(matrix_measured_11syncomm_merge)
+matrix_measured_11syncomm_merge_mean=matrix_measured_11syncomm_merge[1:10,]
+matrix_measured_11syncomm_merge_sd=matrix_measured_11syncomm_merge[11:20,]
+
+matrix_measured_11syncomm_merge_mean[matrix_measured_11syncomm_merge_mean==0]=0.0005
+
+ratio11=matrix_theory_11syncomm_percentage/matrix_measured_11syncomm_merge_mean
+ratio11_norm=sweep(ratio11,2,ratio11[6,],"/")
+ratio11_geomean=apply(ratio11_norm,1,geoMean)   #This is the adjustment to use for all 16S communities
+
+#Look at how good the adjustment is
+matrix_measured_11syncomm_merge_adj=sweep(matrix_measured_11syncomm_merge_mean,1,ratio11_geomean,"*")
+matrix_measured_11syncomm_merge_adj=sweep(matrix_measured_11syncomm_merge_adj,2,colSums(matrix_measured_11syncomm_merge_adj),"/")*100
+
+ASV11_list_syncomm=c('Psychro9','Psychro14','Vibrio1','Vibrio2','Pseudo5','Halo10','Rhodo26','Altero38','Flavo71','Oceano4')
+ASV11_list_syncomm=short_to_long(ASV11_list_syncomm)
+names(ratio11_geomean)=ASV11_list_syncomm
+
+matrix_measured_11syncomm_merge_adj=as.data.frame(matrix_measured_11syncomm_merge_adj)
+rownames(matrix_measured_11syncomm_merge_adj)=ASV11_list_syncomm
+matrix_measured_11syncomm_merge_adj$taxa=ASV11_list_syncomm
+reshape_measured_11syncomm_merge_summary=melt(matrix_measured_11syncomm_merge_adj,id.vars = 'taxa')
+names(reshape_measured_11syncomm_merge_summary)=c('taxa','sample','abundance_adj')
+reshape_measured_11syncomm_merge_mean=melt(matrix_measured_11syncomm_merge_mean)
+reshape_measured_11syncomm_merge_summary$abundance_measured=reshape_measured_11syncomm_merge_mean$value
+reshape_theory_11syncomm_percentage=melt(matrix_theory_11syncomm_percentage)
+reshape_measured_11syncomm_merge_summary$abundance_theory=reshape_theory_11syncomm_percentage$value
+#ASV11palette_2=ASV11palette[c(7,6,9,10,5,3,4,8,1,2)]
+
+p_adjust=ggplot(reshape_measured_11syncomm_merge_summary,aes(x=abundance_theory,y=abundance_adj,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV11Palette)+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw(base_size = 18)+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% 16S sequencing, adjusted')
+
+p_measured=ggplot(reshape_measured_11syncomm_merge_summary,aes(x=abundance_theory,y=abundance_measured,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV11Palette)+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw(base_size = 18)+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% 16S sequencing, measured')
+
+#png('Figures_final/S12_11syncomm_example_combined.png',res=300,width=4000,height=1200)
+plot_grid(p_measured,p_adjust,labels = NULL, align = 'h')
+#dev.off()
+
+```
+
+
+
+##How does the co-bloom of vibrios and halomonas affect community dynamics?
+```{r}
+
+ps_11strains_P_ratio=subset_samples(ps_11strains_P,source=='isolate-mix-seawater-ratio')
+ps_FE_11strains_P=merge_phyloseq(ps_11strains_P_ratio,ps_FE_P)
+sample_data(ps_FE_11strains_P)$source_rep=as.character(sample_data(ps_FE_11strains_P)$source_rep)
+sample_data(ps_FE_11strains_P)$rep=substr(sample_data(ps_FE_11strains_P)$source_rep,nchar(sample_data(ps_FE_11strains_P)$source_rep),nchar(sample_data(ps_FE_11strains_P)$source_rep))
+tax_table(ps_FE_11strains_P)[is.na(tax_table(ps_FE_11strains_P)[,'ASV11']),'ASV11']='Other'
+
+
+######Export out of phyloseq for stacked area plot in ggplot2
+ASV11_list_P=as.vector(tax_table(ps_FE_11strains_P)[,'ASV11'])
+
+
+#OTU table with only 11 strains
+export_FE_11strains_P=as.data.frame(otu_table(ps_FE_11strains_P))
+names(export_FE_11strains_P)=ASV11_list
+export_FE_11strains_P$Other_ASVs=rowSums(export_FE_11strains_P[,names(export_FE_11strains_P) %in% c('Other','Alteromonadaceae12','Oceanospirillaceae6')])
+export_FE_11strains_P[,names(export_FE_11strains_P) %in% c('Other','Alteromonadaceae12','Oceanospirillaceae6')]=NULL
+
+#add in factors
+export_FE_11strains_P$source=sample_data(ps_FE_11strains_P)$source
+export_FE_11strains_P$time=sample_data(ps_FE_11strains_P)$time
+export_FE_11strains_P$time=as.numeric(as.character(export_FE_11strains_P$time))
+export_FE_11strains_P$rep=sample_data(ps_FE_11strains_P)$rep
+
+#melt to long format
+reshape_export_FE_11strains_P=melt(export_FE_11strains_P,id=c('source','time','rep'))
+
+names(reshape_export_FE_11strains_P)[4]='ASV11'
+names(reshape_export_FE_11strains_P)[5]='Percentage'
+reshape_export_FE_11strains_P$fraction=reshape_export_FE_11strains_P$Percentage/100
+reshape_export_FE_11strains_P2=reshape_export_FE_11strains_P
+reshape_export_FE_11strains_P$ASV11=as.character(reshape_export_FE_11strains_P$ASV11)
+
+
+
+
+
+##calculate mean and variance  #start of reshape_export_FE_11strains_P_merge
+reshape_export_FE_11strains_P_merge=reshape_export_FE_11strains_P %>% group_by(source,time,ASV11) %>% summarize(mean_percentage=mean(Percentage),sd_percentage=sd(Percentage)) 
+reshape_export_FE_11strains_P_merge=as.data.frame(reshape_export_FE_11strains_P_merge)
+reshape_export_FE_11strains_P_merge=rbind(reshape_export_FE_11strains_P_merge,inoculum_FE_11strains[,1:5])
+reshape_export_FE_11strains_P_merge=reshape_export_FE_11strains_P_merge %>% filter(source!='isolate-mix-100-fold')
+reshape_export_FE_11strains_P_merge$source=factor(reshape_export_FE_11strains_P_merge$source,levels=c('Sediment','Seawater','isolate-mix-seawater-ratio'))
+reshape_export_FE_11strains_P_merge_no_others=reshape_export_FE_11strains_P_merge %>% filter(ASV11!='Other_ASVs')
+reshape_export_FE_11strains_P_merge_no_others=reshape_export_FE_11strains_P_merge_no_others %>% group_by(source,time) %>% mutate(mean_percentage_norm=100*mean_percentage/sum(mean_percentage))
+
+reshape_export_FE_11strains_P_merge_no_others=reshape_export_FE_11strains_P_merge_no_others %>% group_by(source,time) %>% arrange(ASV11,.by_group=TRUE)
+
+#change ratio geo mean to the same sequence as the factors in reshape_export_FE_11strains_P_merge_no_others
+reshape_export_FE_11strains_P_merge_no_others$ASV11=as.factor(reshape_export_FE_11strains_P_merge_no_others$ASV11)
+
+ratio11_geomean_match=ratio11_geomean[match(levels(reshape_export_FE_11strains_P_merge_no_others$ASV11), names(ratio11_geomean))]
+
+reshape_export_FE_11strains_P_merge_no_others=reshape_export_FE_11strains_P_merge_no_others %>% 
+  group_by('source','time') %>%  mutate(mean_percentage_m=case_when((time==0 & source=='isolate-mix-seawater-ratio') ~ mean_percentage_norm, TRUE ~ mean_percentage_norm*ratio11_geomean_match))
+
+reshape_export_FE_11strains_P_merge_no_others=reshape_export_FE_11strains_P_merge_no_others %>% group_by(.dots=c('source','time')) %>% mutate(mean_percentage_m=mean_percentage_m/sum(mean_percentage_m)*100)
+
+reshape_export_FE_11strains_P_merge_no_others=reshape_export_FE_11strains_P_merge_no_others %>% group_by(.dots=c('source','time','ASV11')) %>% mutate(sd_percentage_m=sd_percentage*(mean_percentage_m/mean_percentage))
+
+
+reshape_export_FE_11strains_P_merge_no_others_HN=reshape_export_FE_11strains_P_merge_no_others %>% filter(ASV11 %in% c("Cobetia10","Neptunomonas4")) %>% filter((time==14 & ASV11=='Cobetia10')| (time==216 & ASV11=='Neptunomonas4'))
+reshape_export_FE_11strains_P_merge_no_others_HN$mean_percentage_m=reshape_export_FE_11strains_P_merge_no_others_HN$mean_percentage_m+0.001
+
+reshape_export_FE_11strains_P_merge_no_others_HN$source=gsub('isolate-mix-seawater-ratio','ISOMIX',reshape_export_FE_11strains_P_merge_no_others_HN$source)
+reshape_export_FE_11strains_P_merge_no_others_HN$ASV11=mgsub(c("Cobetia10","Neptunomonas4"),c("Cobetia10 (14h)","Neptunomonas4 (216h)"),reshape_export_FE_11strains_P_merge_no_others_HN$ASV11)
+
+reshape_export_FE_11strains_P_merge_no_others_HN$source=as.factor(reshape_export_FE_11strains_P_merge_no_others_HN$source)
+reshape_export_FE_11strains_P_merge_no_others_HN$source= factor(reshape_export_FE_11strains_P_merge_no_others_HN$source, 
+                                                     levels = levels(reshape_export_FE_11strains_P_merge_no_others_HN$source)[c(2,3,1)])
+
+
+
+HN=ASV5Palette_1[rownames(ASV5Palette_1) %in% c("Cobetia10","Neptunomonas4"),]
+
+reshape_export_FE_11strains_P_merge_no_others_HN=reshape_export_FE_11strains_P_merge_no_others_HN %>% mutate(min_m=max(mean_percentage_m-sd_percentage_m,0.001))
+
+HN_corr=ggplot(reshape_export_FE_11strains_P_merge_no_others_HN,aes(x=source,y=mean_percentage_m,                             group=ASV11,col=ASV11))+geom_line(alpha=0.7)+geom_point(size=3,alpha=0.7)+
+  geom_errorbar(aes(ymax = mean_percentage_m + sd_percentage_m, ymin =min_m,x=source,color=ASV11), width=0)+
+  scale_y_log10(limits=c(0.001,100))+
+  ylab("Relative abundance (%)")+
+  scale_color_manual(values=HN)+
+  theme_bw(base_size = 16)
+
+png('Figures_final/S10_HN_corr.png',width=2000,height=1500,res=300)
+HN_corr
+dev.off()
+
+
+```
+#Plot growth curve of isolate-mixed-communities
+```{r}
+reshape_export_FE_cc_11strains_cc_sum_isolates=reshape_export_FE_cc_11strains_cc %>% filter(source=='isolate-mix-seawater-ratio') %>% group_by(.dots=c('time','rep')) %>% summarise(sum_cc=sum(cc))
+inoculate_11strains_cc_sum_isolates=inoculum_FE_11strains %>% 
+  filter(source=='isolate-mix-seawater-ratio') %>% group_by(.dots=c('time')) %>% summarise(sum_cc=sum(mean_cc))
+
+reshape_export_FE_11strains_P2=reshape_export_FE_11strains_P2 %>%
+filter(source=='isolate-mix-seawater-ratio') %>% filter(ASV11!='Other_ASVs')%>%
+  mutate(category=case_when(ASV11 %in% ASV11list_early ~ 'Early', TRUE ~ 'Late')) %>% mutate(ASV11=as.character(ASV11)) %>% arrange(ASV11) %>% mutate(ASV11=as.factor(ASV11))
+
+reshape_export_FE_11strains_P2=reshape_export_FE_11strains_P2 %>% group_by(time,rep,source) %>% mutate(fraction_m=fraction*ratio11_geomean_match)
+reshape_export_FE_11strains_P2=reshape_export_FE_11strains_P2 %>% group_by(time,rep,source) %>% mutate(fraction_m=fraction_m/sum(fraction_m))
+
+reshape_export_FE_11strains_P2_isolate_only=reshape_export_FE_11strains_P2 %>% group_by(rep,time,category) %>% summarise(category_fraction=sum(fraction_m))
+
+inoculate_11strains_ratio_isolates=inoculum_FE_11strains %>% 
+filter(source=='isolate-mix-seawater-ratio') %>% mutate(category=case_when(ASV11 %in% ASV11list_early ~ 'Early', TRUE ~ 'Late')) %>% group_by(time,category) %>% summarise(fraction=sum(mean_percentage)/100)
+
+inoculate_11strains_ratio_isolates_rbind=data.frame(rep='1',time=inoculate_11strains_ratio_isolates$time,category=as.character(inoculate_11strains_ratio_isolates$category),category_fraction=inoculate_11strains_ratio_isolates$fraction)
+reshape_export_FE_11strains_P2_isolate_only_2=bind_rows(reshape_export_FE_11strains_P2_isolate_only,                                                  inoculate_11strains_ratio_isolates_rbind)
+
+reshape_export_FE_cc_11strains_cc_sum_isolates[nrow(reshape_export_FE_cc_11strains_cc_sum_isolates)+1,]=c(
+  inoculate_11strains_cc_sum_isolates[1],as.character(1),inoculate_11strains_cc_sum_isolates[2])
+reshape_export_FE_cc_11strains_cc_sum_isolates=arrange(reshape_export_FE_cc_11strains_cc_sum_isolates,rep,time)
+
+
+reshape_export_FE_11strains_P2_isolate_only_early=reshape_export_FE_11strains_P2_isolate_only_2 %>% filter(category=='Early')
+reshape_export_FE_11strains_P2_isolate_only_early=arrange(reshape_export_FE_11strains_P2_isolate_only_early,rep,time)
+reshape_export_FE_11strains_P2_isolate_only_early$cc=reshape_export_FE_11strains_P2_isolate_only_early$category_fraction*reshape_export_FE_cc_11strains_cc_sum_isolates$sum_cc
+
+reshape_export_FE_11strains_P2_isolate_only_late=reshape_export_FE_11strains_P2_isolate_only_2 %>% filter(category=='Late')
+reshape_export_FE_11strains_P2_isolate_only_late=arrange(reshape_export_FE_11strains_P2_isolate_only_late,rep,time)
+reshape_export_FE_11strains_P2_isolate_only_late$cc=reshape_export_FE_11strains_P2_isolate_only_late$category_fraction*reshape_export_FE_cc_11strains_cc_sum_isolates$sum_cc
+
+reshape_export_FE_cc_11strains_cc_sum_isolates_agg=reshape_export_FE_cc_11strains_cc_sum_isolates %>% group_by(time) %>% summarise(mean_sum_cc=mean(sum_cc),sd_sum_cc=sd(sum_cc)) 
+reshape_export_FE_cc_11strains_cc_sum_isolates_agg$category='Total'
+reshape_export_FE_11strains_P2_isolate_only_early_agg=reshape_export_FE_11strains_P2_isolate_only_early %>% group_by(time) %>% summarise(mean_sum_cc=mean(cc),sd_sum_cc=sd(cc))
+reshape_export_FE_11strains_P2_isolate_only_early_agg$category='Early'
+reshape_export_FE_11strains_P2_isolate_only_late_agg=reshape_export_FE_11strains_P2_isolate_only_late %>% group_by(time) %>% summarise(mean_sum_cc=mean(cc),sd_sum_cc=sd(cc))
+reshape_export_FE_11strains_P2_isolate_only_late_agg$category='Late'
+
+reshape_export_FE_cc_11strains_cc_sum_isolates_agg_all=bind_rows(reshape_export_FE_cc_11strains_cc_sum_isolates_agg,                                                      reshape_export_FE_11strains_P2_isolate_only_early_agg,
+                                                             reshape_export_FE_11strains_P2_isolate_only_late_agg)
+
+isolate_mix_growth=ggplot(reshape_export_FE_cc_11strains_cc_sum_isolates_agg_all,aes(x=time,y=mean_sum_cc,color=category))+geom_line(size=1)+geom_point(size=3,pch=19)+geom_errorbar(aes(ymax=mean_sum_cc+sd_sum_cc,ymin=mean_sum_cc-sd_sum_cc),width=0)+xlab('Time (h)')+ylab('Cells/mL')+
+scale_y_log10(limits = c(10^2, 10^8),breaks=c(10^3,10^4,10^5,10^6,10^7,10^8))+scale_x_continuous(breaks=c(0,24,72,96,144,216))+scale_color_manual(values = c("darkorchid","darkgreen", "grey50"))+theme_bw()+
+  theme(legend.title=element_text(size=0),axis.text.x=element_text(size=22,vjust=-0.5,color='black'),
+        axis.text.y=element_text(size=22,color='black'),
+        axis.title = element_text(size=26),legend.position = 'top',
+        legend.direction = 'horizontal',legend.text = element_text(size=26))
+  
+  
+
+png('Figures_final/F1e_isolate_mix_growth_log_sep.png',width=900,height=400)
+isolate_mix_growth
+dev.off()
+
+
+```
+
+
+#Figures for relative abundance of 11 ASVs, part2
+```{r,eval=FALSE}
+##With no others
+reshape_export_FE_11strains_P_merge_no_others_isolate_only=reshape_export_FE_11strains_P_merge_no_others %>% filter(source=='isolate-mix-seawater-ratio')
+reshape_export_FE_11strains_P_merge_no_others_isolate_only=reshape_export_FE_11strains_P_merge_no_others_isolate_only %>% mutate(`assembly group`=case_when(ASV11 %in% ASV11list_early ~ 'Early', TRUE ~ 'Late'))
+
+green_purple=c(rep("darkgreen",5),rep("darkorchid",5))
+
+p_11strains_no_others=ggplot(reshape_export_FE_11strains_P_merge_no_others_isolate_only,aes(x=time,y=mean_percentage_m,fill=ASV11))+labs(y = "Relative abundance (%)",x='Time (h)')+theme_bw()+geom_area(position="stack",stat ='identity',alpha=0.6)+xlim(0,220)+
+  geom_line(position='stack',aes(color=ASV11))+scale_fill_manual(values=green_purple)+scale_color_manual(values=green_purple)+
+scale_x_continuous(breaks=c(0,24,72,96,144,216))
+
+p_11strains_no_others_1=p_11strains_no_others+theme(legend.position="none",axis.text= element_text(size=22,color='black'),axis.title = element_text(size=26))+expand_limits(x = 0)
+
+#png('Figures_final/F1f_11strains_normalized.png',height=1200,width=3000,res=300)
+#p_11strains_no_others
+#dev.off()
+
+png('Figures_final/F1ef_11strains_normalized.png',height=2400,width=1800,res=300)
+ggarrange(isolate_mix_growth+rremove("xlab"),p_11strains_no_others_1+rremove("x.ticks")+rremove("x.text"),nrow=2,align = 'v')
+dev.off()
+
+
+
+```
+

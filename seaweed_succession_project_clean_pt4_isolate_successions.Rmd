@@ -1,0 +1,1331 @@
+---
+title: "seaweed_succession_project_pt4_isolate_successions"
+author: "Xiaoqian Yu"
+date: "2022-10-19"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr:: opts_knit$set(root.dir = "C:/Users/Xiaoqian/Desktop/seaweed/FE_enrich")
+```
+
+
+##import libraries
+```{r,warning=FALSE, message=FALSE}
+library(phyloseq)
+library(ggplot2)
+library(RColorBrewer)
+library(scales)
+library(stringr)
+library(reshape)
+#library(plyr)
+library(dplyr)
+library(qdap)
+library(cowplot)
+library(corrplot)
+library(growthrates)
+library(grid)
+library(gridExtra)
+#library(gplots)  #for heatmap
+library(KEGGREST)
+#library(made4)  #for heatplot function
+library(EnvStats)
+library(lattice)
+library(ggpubr)
+```
+
+#import ASV names etc
+```{r}
+seq_11strains_ASV=read.csv('151005_resequence/dada2/sequences_11strains_ASV.csv',row.names = 1)
+
+#read in ASV11Palette for genus
+ASV11Palette_1=read.csv('color_palettes/ASV11Palette_genus.csv',row.names = 1)
+ASV11Palette=ASV11Palette_1$ASV11palette
+ASV11list_new=rownames(ASV11Palette_1)
+ASV11list_early=ASV11list_new[6:10]
+ASV11list_late=ASV11list_new[1:5]
+
+#read in ASV5Palette for genus
+ASV5Palette_1=read.csv('color_palettes/ASV5Palette_genus.csv',row.names = 1)
+ASV5Palette=ASV5Palette_1$ASV5Palette
+ASV5list_new=rownames(ASV5Palette_1)
+
+```
+
+#set up swapping functions
+
+```{r}
+short_names=c("Psychro9","Psychro14","Vibrio1","Vibrio2","Pseudo5","Halo10","Rhodo26","Altero38","Flavo71","Oceano4")
+long_names=c("Psychromonas9","Psychromonas14","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+substrate_old=c('FE','Man')
+substrate_new=c('FL','Mannitol')
+
+
+short_to_long=function(x){
+  y=mgsub(short_names,long_names,x)
+  return(y)
+}
+substrate_swap=function(x){
+  y=mgsub(substrate_old,substrate_new,x)
+  return(y)
+}
+ASV11_swap=function(x){
+  y=mgsub(seq_11strains_ASV$ASV11,seq_11strains_ASV$ASV11_new,x)
+  return(y)
+}
+
+```
+
+## import succession data from 5 strains 
+```{r,warning=FALSE, message=FALSE}
+otu_all_5s=as.data.frame(readRDS('crossfeeding/coexistance/succession_all/seqtab_rm_chimera.rds'))
+otu_all_5s_040219=as.data.frame(readRDS('crossfeeding/coexistance/succession_all/040219_reseq/seqtab_rm_chimera_040219.rds'))
+otu_all_5s_070319=as.data.frame(readRDS('crossfeeding/coexistance/succession_all/070319_quadnew/seqtab_rm_chimera_070319.rds'))
+otu_all_5s_083019=as.data.frame(readRDS('crossfeeding/coexistance/succession_all/083019_reseq_11syncomm/seqtab_rm_chimera_083019.rds'))
+
+rownames(otu_all_5s_040219)=gsub('.fastq.gz','',rownames(otu_all_5s_040219))
+rownames(otu_all_5s_070319)=gsub('.fastq.gz','',rownames(otu_all_5s_070319))
+rownames(otu_all_5s_083019)=gsub('.fastq.gz','',rownames(otu_all_5s_083019))
+
+otu_all_5s_083019_redo_part=otu_all_5s_083019[grep('cyc8|cyc9',rownames(otu_all_5s_083019)),]
+otu_all_5s_083019_11syncomm=otu_all_5s_083019[-grep('cyc8|cyc9',rownames(otu_all_5s_083019)),]
+
+reseq_list=read.table('crossfeeding/coexistance/succession_all/redo_list_040219.txt')
+
+otu_all_5s=otu_all_5s[!(rownames(otu_all_5s) %in% reseq_list[,1]),]
+
+
+otu_all_5s_norm=otu_all_5s/rowSums(otu_all_5s)
+tax_table_5s=readRDS('crossfeeding/coexistance/succession_all/taxa_species.rds')
+tax_table_5s_040219=readRDS('crossfeeding/coexistance/succession_all/040219_reseq/taxa_species_040219.rds')
+tax_table_5s_070319=readRDS('crossfeeding/coexistance/succession_all/070319_quadnew/taxa_species_070319.rds')
+tax_table_5s_083019=readRDS('crossfeeding/coexistance/succession_all/083019_reseq_11syncomm/taxa_species_083019.rds')
+seq_11strains_ASV_new=read.csv('crossfeeding/reconstitute/sequences_11strains_ASV_new.csv',row.names = 1)
+
+#Import seperate lists
+quad_list=read.table('crossfeeding/coexistance/succession_all/quad_list_all.txt')
+paired_list=read.table('crossfeeding/coexistance/succession_all/paired_list.txt')
+quad_list_1=quad_list[1:16,]
+quad_list_3=quad_list[17:24,]
+quad_list_2=quad_list[25:40,]
+
+#correct for previous labeling errors 
+#due to the way I inoculated samples, the samples were only labeled wrong but not mixed wrong so I just need to correct labels
+
+##Correct for 040219 and 070319 datasets
+rownames(otu_all_5s_040219)=stringr::str_replace_all(rownames(otu_all_5s_040219),c('P0-V0-H0-N0-F10'='P0-V0-H90-N0-F10','P0-V0-H0-N0-F90'='P0-V0-H10-N0-F90'))
+rownames(otu_all_5s_040219)=stringr::str_replace_all(rownames(otu_all_5s_040219),c('P0-V0-H0-N10-F0'='P0-V0-H90-N10-F0','P0-V0-H0-N90-F0'='P0-V0-H10-N90-F0'))
+
+rownames(otu_all_5s_070319)=stringr::str_replace_all(rownames(otu_all_5s_070319),c('P0-V0-H0-N0-F10'='P0-V0-H90-N0-F10','P0-V0-H0-N0-F90'='P0-V0-H10-N0-F90'))
+rownames(otu_all_5s_070319)=stringr::str_replace_all(rownames(otu_all_5s_070319),c('P0-V0-H0-N10-F0'='P0-V0-H90-N10-F0','P0-V0-H0-N90-F0'='P0-V0-H10-N90-F0'))
+
+#There was an error with the barcoding file for Paired1_cyc8, such that in this run all Paired1 samples in cyc8 became cyc5
+#This is for correcting this error
+otu_all_5s_070319_paired1=otu_all_5s_070319[grepl(paste(paired_list$V1[1:14],collapse = '|'),rownames(otu_all_5s_070319)),]
+otu_all_5s_070319_no_paired1=otu_all_5s_070319[!grepl(paste(paired_list$V1[1:14],collapse = '|'),rownames(otu_all_5s_070319)),]
+rownames(otu_all_5s_070319_paired1)=gsub('cyc5','cyc8',rownames(otu_all_5s_070319_paired1))
+otu_all_5s_070319=rbind(otu_all_5s_070319_paired1,otu_all_5s_070319_no_paired1)
+
+##turns out that the sequencing did not work for these samples in the first round of sequencing so for this round just remove
+otu_all_5s=otu_all_5s[!grepl('P0-V0-H0-N0-F10|P0-V0-H0-N0-F90|P0-V0-H0-N10-F0|P0-V0-H0-N90-F0',rownames(otu_all_5s)),]
+
+```
+
+
+## Sort out tax_table
+
+```{r pressure, echo=FALSE,warning=FALSE,message=FALSE}
+tax_table_5s=tax_table_5s %>% mutate(Genus=case_when(is.na(Genus.y)~Genus.x, TRUE ~ Genus.y))
+tax_table_5s$Genus.x=NULL
+tax_table_5s$Genus.y=NULL
+n=ncol(tax_table_5s)
+tax_table_5s[,c(n,n-1)]=tax_table_5s[,c(n-1,n)]
+names(tax_table_5s)[c(n,n-1)]=names(tax_table_5s)[c(n-1,n)]
+tax_table_5s$ASV=paste0(tax_table_5s$Genus,rownames(tax_table_5s),'new')
+rownames(tax_table_5s)=tax_table_5s$Row.names
+tax_table_5s$Row.names=NULL
+tax_table_5s=merge(tax_table_5s,seq_11strains_ASV_new,by=0,all=T)
+tax_table_5s$ASV11=tax_table_5s$ASV11_new
+tax_table_5s$ASV11_new=NULL
+rownames(tax_table_5s)=tax_table_5s$Row.names
+tax_table_5s$Row.names=NULL
+tax_table_5s_table=as.matrix(tax_table_5s)
+
+tax_table_5s_040219=tax_table_5s_040219 %>% mutate(Genus=case_when(is.na(Genus.y)~Genus.x, TRUE ~ Genus.y))
+tax_table_5s_040219$Genus.x=NULL
+tax_table_5s_040219$Genus.y=NULL
+n=ncol(tax_table_5s_040219)
+tax_table_5s_040219[,c(n,n-1)]=tax_table_5s_040219[,c(n-1,n)]
+names(tax_table_5s_040219)[c(n,n-1)]=names(tax_table_5s_040219)[c(n-1,n)]
+tax_table_5s_040219$ASV=paste0(tax_table_5s_040219$Genus,rownames(tax_table_5s_040219),'new')
+rownames(tax_table_5s_040219)=tax_table_5s_040219$Row.names
+tax_table_5s_040219$Row.names=NULL
+tax_table_5s_040219=merge(tax_table_5s_040219,seq_11strains_ASV_new,by=0,all=T)
+tax_table_5s_040219$ASV11=tax_table_5s_040219$ASV11_new
+tax_table_5s_040219$ASV11_new=NULL
+rownames(tax_table_5s_040219)=tax_table_5s_040219$Row.names
+tax_table_5s_040219$Row.names=NULL
+tax_table_5s_040219_table=as.matrix(tax_table_5s_040219)
+
+
+tax_table_5s_070319=tax_table_5s_070319 %>% mutate(Genus=case_when(is.na(Genus.y)~Genus.x, TRUE ~ Genus.y))
+tax_table_5s_070319$Genus.x=NULL
+tax_table_5s_070319$Genus.y=NULL
+n=ncol(tax_table_5s_070319)
+tax_table_5s_070319[,c(n,n-1)]=tax_table_5s_070319[,c(n-1,n)]
+names(tax_table_5s_070319)[c(n,n-1)]=names(tax_table_5s_070319)[c(n-1,n)]
+tax_table_5s_070319$ASV=paste0(tax_table_5s_070319$Genus,rownames(tax_table_5s_070319),'new')
+rownames(tax_table_5s_070319)=tax_table_5s_070319$Row.names
+tax_table_5s_070319$Row.names=NULL
+tax_table_5s_070319=merge(tax_table_5s_070319,seq_11strains_ASV_new,by=0,all=T)
+tax_table_5s_070319$ASV11=tax_table_5s_070319$ASV11_new
+rownames(tax_table_5s_070319)=tax_table_5s_070319$Row.names
+tax_table_5s_070319$Row.names=NULL
+tax_table_5s_070319_table=as.matrix(tax_table_5s_070319)
+
+
+tax_table_5s_083019=tax_table_5s_083019 %>% mutate(Genus=case_when(is.na(Genus.y)~Genus.x, TRUE ~ Genus.y))
+tax_table_5s_083019$Genus.x=NULL
+tax_table_5s_083019$Genus.y=NULL
+n=ncol(tax_table_5s_083019)
+tax_table_5s_083019[,c(n,n-1)]=tax_table_5s_083019[,c(n-1,n)]
+names(tax_table_5s_083019)[c(n,n-1)]=names(tax_table_5s_083019)[c(n-1,n)]
+tax_table_5s_083019$ASV=paste0(tax_table_5s_083019$Genus,rownames(tax_table_5s_083019),'new')
+rownames(tax_table_5s_083019)=tax_table_5s_083019$Row.names
+tax_table_5s_083019$Row.names=NULL
+tax_table_5s_083019=merge(tax_table_5s_083019,seq_11strains_ASV_new,by=0,all=T)
+tax_table_5s_083019$ASV11=tax_table_5s_083019$ASV11_new
+tax_table_5s_083019$ASV11_new=NULL
+rownames(tax_table_5s_083019)=tax_table_5s_083019$Row.names
+tax_table_5s_083019$Row.names=NULL
+tax_table_5s_083019_table=as.matrix(tax_table_5s_083019)
+```
+
+```{r}
+#1
+metadata_5s=rownames(otu_all_5s)
+comb=unlist(lapply(lapply(strsplit(metadata_5s, "-"),'[',1:5),function(x) paste(x,collapse = '-')))
+time_5s=substr(sapply(strsplit(metadata_5s, "-"), `[`, 7),1,2)
+rep_5s=sapply(strsplit(metadata_5s, "-"), `[`, 6)
+substrate_5s=sapply(strsplit(metadata_5s, "-"), `[`, 8)
+cycle_5s=substr(sapply(strsplit(metadata_5s, "-"), `[`, 9),4,4)
+metadata_5s_1 <- data.frame(comb=comb, time=time_5s,rep=rep_5s,substrate=substrate_5s,cycle=cycle_5s)
+rownames(metadata_5s_1)=rownames(otu_all_5s)
+#2
+metadata_5s_040219=rownames(otu_all_5s_040219)
+comb_040219=unlist(lapply(lapply(strsplit(metadata_5s_040219, "-"),'[',1:5),function(x) paste(x,collapse = '-')))
+time_5s_040219=substr(sapply(strsplit(metadata_5s_040219, "-"), `[`, 7),1,2)
+rep_5s_040219=sapply(strsplit(metadata_5s_040219, "-"), `[`, 6)
+substrate_5s_040219=sapply(strsplit(metadata_5s_040219, "-"), `[`, 8)
+cycle_5s_040219=substr(sapply(strsplit(metadata_5s_040219, "-"), `[`, 9),4,4)
+metadata_5s_040219_1 <- data.frame(comb=comb_040219, time=time_5s_040219,rep=rep_5s_040219,substrate=substrate_5s_040219,cycle=cycle_5s_040219)
+rownames(metadata_5s_040219_1)=rownames(otu_all_5s_040219)
+#3
+metadata_5s_070319=rownames(otu_all_5s_070319)
+comb_070319=unlist(lapply(lapply(strsplit(metadata_5s_070319, "-"),'[',1:5),function(x) paste(x,collapse = '-')))
+time_5s_070319=substr(sapply(strsplit(metadata_5s_070319, "-"), `[`, 7),1,2)
+rep_5s_070319=sapply(strsplit(metadata_5s_070319, "-"), `[`, 6)
+substrate_5s_070319=sapply(strsplit(metadata_5s_070319, "-"), `[`, 8)
+cycle_5s_070319=substr(sapply(strsplit(metadata_5s_070319, "-"), `[`, 9),4,4)
+cycle_5s_070319[grep('D',cycle_5s_070319)]=substr(sapply(strsplit(metadata_5s_070319, "-"), `[`, 9),2,2)[grep('D',cycle_5s_070319)]
+metadata_5s_070319_1 <- data.frame(comb=comb_070319, time=time_5s_070319,rep=rep_5s_070319,substrate=substrate_5s_070319,cycle=cycle_5s_070319)
+metadata_5s_070319_1$cycle=as.character(metadata_5s_070319_1$cycle)
+rownames(metadata_5s_070319_1)=rownames(otu_all_5s_070319)
+#4
+metadata_5s_083019=rownames(otu_all_5s_083019_redo_part)
+comb_083019=unlist(lapply(lapply(strsplit(metadata_5s_083019, "-"),'[',1:5),function(x) paste(x,collapse = '-')))
+time_5s_083019=substr(sapply(strsplit(metadata_5s_083019, "-"), `[`, 7),1,2)
+rep_5s_083019=sapply(strsplit(metadata_5s_083019, "-"), `[`, 6)
+substrate_5s_083019=sapply(strsplit(metadata_5s_083019, "-"), `[`, 8)
+cycle_5s_083019=substr(sapply(strsplit(metadata_5s_083019, "-"), `[`, 9),4,4)
+cycle_5s_083019[grep('D',cycle_5s_083019)]=substr(sapply(strsplit(metadata_5s_083019, "-"), `[`, 9),2,2)[grep('D',cycle_5s_083019)]
+metadata_5s_083019_1 <- data.frame(comb=comb_083019, time=time_5s_083019,rep=rep_5s_083019,substrate=substrate_5s_083019,cycle=cycle_5s_083019)
+metadata_5s_083019_1$cycle=as.character(metadata_5s_083019_1$cycle)
+rownames(metadata_5s_083019_1)=rownames(otu_all_5s_083019_redo_part)
+
+#5
+metadata_5s_083019_11syncomm=rownames(otu_all_5s_083019_11syncomm)
+comb_083019_11syncomm=unlist(lapply(lapply(strsplit(metadata_5s_083019_11syncomm, "-"),'[',1:11),function(x) paste(x,collapse = '-')))
+rep_083019_11syncomm=sapply(strsplit(metadata_5s_083019_11syncomm, "-"), `[`, 12)
+metadata_5s_083019_11syncomm <- data.frame(comb=comb_083019_11syncomm,rep=rep_083019_11syncomm)
+rownames(metadata_5s_083019_11syncomm)=rownames(otu_all_5s_083019_11syncomm)
+
+
+
+```
+
+
+```{r}
+ps_5strains=phyloseq(otu_table(otu_all_5s, taxa_are_rows=FALSE),sample_data(metadata_5s_1), 
+              tax_table(tax_table_5s_table))
+ps_5strains_bk=subset_samples(ps_5strains,comb=='P0-V0-H0-N0-F0')   #All blank samples have very low counts and can be omitted
+ps_5strains_nobk=subset_samples(ps_5strains,comb!='P0-V0-H0-N0-F0')
+
+ps_5strains_040219=phyloseq(otu_table(otu_all_5s_040219, taxa_are_rows=FALSE),sample_data(metadata_5s_040219_1), 
+              tax_table(tax_table_5s_040219_table))
+ps_5strains_040219_bk=subset_samples(ps_5strains_040219,comb=='P0-V0-H0-N0-F0'|is.na(time))   #All blank samples have very low counts and can be omitted
+ps_5strains_040219_nobk=subset_samples(ps_5strains_040219,!(comb=='P0-V0-H0-N0-F0'|is.na(time)))
+
+ps_5strains_070319=phyloseq(otu_table(otu_all_5s_070319, taxa_are_rows=FALSE),sample_data(metadata_5s_070319_1), 
+              tax_table(tax_table_5s_070319_table))
+ps_5strains_070319_bk=subset_samples(ps_5strains_070319,comb=='P0-V0-H0-N0-F0'|is.na(time))   #All blank samples have very low counts, or is mostly contaminated by "Rizobales", and is sufficiently different from our samples; so we omit the Rhizobiales from all our samples
+ps_5strains_070319_nobk=subset_samples(ps_5strains_070319,!(comb=='P0-V0-H0-N0-F0'|is.na(time)))
+ps_5strains_070319_nobk=subset_taxa(ps_5strains_070319_nobk,!Order=='Rhizobiales')
+ps_5strains_070319_nobk=subset_samples(ps_5strains_070319_nobk,!(substrate=='Man'& cycle==9)) ##The qpcr in the first step amplification for cycle 9 was very weird...had ct value of around 25 while ususally it should be 17, so something must have went wrong, so remove cycle 9 data from this round)
+#ps_5strains_weird=subset_samples(ps_5strains_nobk,comb %in% c('P90-V0-H0-N10-F0','P10-V0-H0-N90-F0','P90-V0-H0-N0-F10','P10-V0-H0-N0-F90'))
+#looks like the samples that look like they have contamination are those that have very low seq reads--so the library prep basically failed
+
+
+ps_5strains_070319_nobk_paired1=subset_samples(ps_5strains_070319_nobk,comb %in% paired_list$V1[1:14] & cycle==8)
+
+
+## I redid the coexistance experiments for the samples that had problems with sequencing/extraction in cycle 9,but it turned out that the transfer time I used for cycle 7 and 8 was 24h and 72h instead of 48h, 48h, and this lead to a much larger fraction in Halomonas than ever expected. Given that the fraction in cycle 9 was constantly lower than cycle 8, this means that the change in experiment conditions may have strongly interfered with the results; thus I am not using this data as results
+
+#ps_5strains_083019=phyloseq(otu_table(otu_all_5s_083019_redo_part, taxa_are_rows=FALSE),sample_data(metadata_5s_083019_1), 
+#              tax_table(tax_table_5s_083019_table))
+#ps_5strains_083019_bk=subset_samples(ps_5strains_083019,comb=='P0-V0-H0-N0-F0'|is.na(time))
+#ps_5strains_083019_nobk=subset_samples(ps_5strains_083019,!(comb=='P0-V0-H0-N0-F0'|is.na(time)) & cycle==9)
+#ps_5strains_083019_nobk=subset_taxa(ps_5strains_083019_nobk,!Order=='Rhizobiales')
+#write.csv(as.data.frame(otu_table(ps_5strains_083019_nobk)),'otu_table_083019.csv')
+#write.csv(as.data.frame(tax_table(ps_5strains_083019_nobk)),'tax_table_083019.csv')
+
+ps_083019_11syncomm=phyloseq(otu_table(otu_all_5s_083019_11syncomm, taxa_are_rows=FALSE),sample_data(metadata_5s_083019_11syncomm), 
+              tax_table(tax_table_5s_083019_table))
+ps_083019_11syncomm=subset_taxa(ps_083019_11syncomm,!Order=='Rhizobiales')
+ps_083019_11syncomm=subset_samples(ps_083019_11syncomm,sample_sums(ps_083019_11syncomm)>100)
+ps_083019_11syncomm_P=transform_sample_counts(ps_083019_11syncomm, function(x) 100 * x/sum(x))
+ps_083019_11syncomm_P = filter_taxa(ps_083019_11syncomm_P, function(x) sum(x > 0.5) > 2, TRUE)
+#Remove taxa not seen more than 0.5% in at least 2 samples
+#also there is a taxa Vibrio9new that is likely some kind of sequence variant of Vib1, for simplicity I remove this taxa
+ps_083019_11syncomm_P=subset_taxa(ps_083019_11syncomm_P,!ASV=='Vibrio9new')
+#write.csv(otu_table(ps_083019_11syncomm_P),'otu_table_083019_11syncomm_P.csv')
+#write.csv(tax_table(ps_083019_11syncomm_P),'tax_table_083019_11syncomm_P.csv')
+#ps_5strains_notweird=subset_samples(ps_5strains_nobk,!comb %in% c('P90-V0-H0-N10-F0','P10-V0-H0-N90-F0','P90-V0-H0-N0-F10','P10-V0-H0-N0-F90'))
+#otu_table(ps_5strains_weird)[,grep('Vibrionaceae1',tax_table(ps_5strains_weird)[,"ASV11"])]=0
+ps_5strains_nobk_1=merge_phyloseq(ps_5strains_nobk,ps_5strains_040219_nobk)
+ps_5strains_nobk_1=merge_phyloseq(ps_5strains_nobk_1,ps_5strains_070319_nobk)
+#ps_5strains_nobk_1=merge_phyloseq(ps_5strains_nobk_1,ps_5strains_083019_nobk)
+ps_5strains_nobk_1=subset_samples(ps_5strains_nobk_1,sample_sums(ps_5strains_nobk_1)>400)
+ps_5strains_P=transform_sample_counts(ps_5strains_nobk_1, function(x) 100 * x/sum(x))
+ps_5strains_P = filter_taxa(ps_5strains_P, function(x) sum(x > 2) > 2, TRUE) #Remove taxa not seen more than 2% in at least 2 samples, this leaves only the 5 ASVs that we start off with
+
+ps_5strains_f=transform_sample_counts(ps_5strains_P, function(x) x/100)
+
+```
+
+#10 strain mock community 
+```{r}
+matrix_measured_11syncomm=as.data.frame(otu_table(ps_083019_11syncomm_P))
+#Delete any rows that have less than 7 measured taxa--since communities were mixed with 10 strains this means there was something wrong with seqencing, etc
+matrix_measured_11syncomm=matrix_measured_11syncomm[apply(matrix_measured_11syncomm,1,function(x) sum(x>0)>8),]
+#I am arbitrarily reordering for the sake of simplicity
+matrix_measured_11syncomm=matrix_measured_11syncomm[,c(8,6,1,3,9,2,5,7,10,4)]
+matrix_measured_11syncomm$comb=unlist(lapply(lapply(strsplit(rownames(matrix_measured_11syncomm), "-"),'[',1:11),function(x) paste(x,collapse = '-')))
+matrix_measured_11syncomm_merge=matrix_measured_11syncomm %>% group_by(comb) %>% summarise_all(list(mean = mean, sd = sd))
+matrix_measured_11syncomm_merge$comb=NULL
+matrix_measured_11syncomm_merge=as.matrix(matrix_measured_11syncomm_merge)  #first 10 columns are mean, second 10 columns are sd
+matrix_theory_11syncomm=as.data.frame((matrix(unlist(strsplit(rownames(matrix_measured_11syncomm), "-")),ncol=12,byrow=T)))
+matrix_theory_11syncomm=matrix_theory_11syncomm[,1:11]
+matrix_theory_11syncomm=as.data.frame(apply(matrix_theory_11syncomm,2,as.numeric))
+matrix_theory_11syncomm$comb=unlist(lapply(lapply(strsplit(rownames(matrix_measured_11syncomm), "-"),'[',1:11),function(x) paste(x,collapse = '-')))
+
+matrix_theory_11syncomm_merge=matrix_theory_11syncomm %>% group_by(comb) %>% summarise_all(funs(mean))
+
+cell_counts_11syncomm=read.csv('crossfeeding/FACS/091719_11strains_mix_inoculate/11strains_inoculate_counts.csv',row.names = 1)
+matrix_theory_11syncomm_cell=sweep(matrix_theory_11syncomm_merge[,2:12],2,cell_counts_11syncomm$cell_counts,'*')
+matrix_theory_11syncomm_percentage=sweep(matrix_theory_11syncomm_cell,1,rowSums(matrix_theory_11syncomm_cell),'/')*100
+matrix_theory_11syncomm_percentage$V7=matrix_theory_11syncomm_percentage$V7+matrix_theory_11syncomm_percentage$V4
+matrix_theory_11syncomm_percentage$V4=NULL
+
+matrix_theory_11syncomm_percentage=t(matrix_theory_11syncomm_percentage)
+matrix_measured_11syncomm_merge=t(matrix_measured_11syncomm_merge)
+matrix_measured_11syncomm_merge_mean=matrix_measured_11syncomm_merge[1:10,]
+matrix_measured_11syncomm_merge_sd=matrix_measured_11syncomm_merge[11:20,]
+
+matrix_measured_11syncomm_merge_mean[matrix_measured_11syncomm_merge_mean==0]=0.0005
+
+ratio11=matrix_theory_11syncomm_percentage/matrix_measured_11syncomm_merge_mean
+ratio11_norm=sweep(ratio11,2,ratio11[6,],"/")
+ratio11_geomean=apply(ratio11_norm,1,geoMean)   #This is the adjustment to use for all 16S communities
+
+#Look at how good the adjustment is
+matrix_measured_11syncomm_merge_adj=sweep(matrix_measured_11syncomm_merge_mean,1,ratio11_geomean,"*")
+matrix_measured_11syncomm_merge_adj=sweep(matrix_measured_11syncomm_merge_adj,2,colSums(matrix_measured_11syncomm_merge_adj),"/")*100
+
+ASV11_list_syncomm=c('Psychro9','Psychro14','Vibrio1','Vibrio2','Pseudo5','Halo10','Rhodo26','Altero38','Flavo71','Oceano4')
+ASV11_list_syncomm=short_to_long(ASV11_list_syncomm)
+
+matrix_measured_11syncomm_merge_adj=as.data.frame(matrix_measured_11syncomm_merge_adj)
+rownames(matrix_measured_11syncomm_merge_adj)=ASV11_list_syncomm
+matrix_measured_11syncomm_merge_adj$taxa=ASV11_list_syncomm
+reshape_measured_11syncomm_merge_summary=melt(matrix_measured_11syncomm_merge_adj,id.vars = 'taxa')
+names(reshape_measured_11syncomm_merge_summary)=c('taxa','sample','abundance_adj')
+reshape_measured_11syncomm_merge_mean=melt(matrix_measured_11syncomm_merge_mean)
+reshape_measured_11syncomm_merge_summary$abundance_measured=reshape_measured_11syncomm_merge_mean$value
+reshape_theory_11syncomm_percentage=melt(matrix_theory_11syncomm_percentage)
+reshape_measured_11syncomm_merge_summary$abundance_theory=reshape_theory_11syncomm_percentage$value
+#ASV11palette_2=ASV11palette[c(7,6,9,10,5,3,4,8,1,2)]
+
+p_adjust=ggplot(reshape_measured_11syncomm_merge_summary,aes(x=abundance_theory,y=abundance_adj,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV11Palette)+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw(base_size = 18)+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% 16S sequencing, adjusted')
+
+p_measured=ggplot(reshape_measured_11syncomm_merge_summary,aes(x=abundance_theory,y=abundance_measured,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV11Palette)+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw(base_size = 18)+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% 16S sequencing, measured')
+
+#png('Figures_final/S12_11syncomm_example_combined.png',res=300,width=4000,height=1200)
+plot_grid(p_measured,p_adjust,labels = NULL, align = 'h')
+#dev.off()
+
+
+
+#png('Figures_compiled/16S_correction/11syncomm_example.png',res=300,width=4000,height=2000)
+#par(mfrow=c(2,5))
+#for (i in 1:10){
+#   plot(matrix_theory_11syncomm_percentage[i,],matrix_measured_11syncomm_merge_adj[i,1:18],col=alpha('red',0.7),xlim=#c(0,100),ylim=c(0,100),xlab='% by FACS counts', ylab='% by 16S sequencing',main=ASV11_list_syncomm[i],pch=19)
+#  points(matrix_theory_11syncomm_percentage[i,],matrix_measured_11syncomm_merge[i,],col=alpha('blue',0.7),pch=19)
+#  abline(0,1,lty=2)
+#  
+#}
+#dev.off()
+
+```
+
+```{r}
+######Export out of phyloseq for stacked area plot in ggplot2
+ASV5_list=as.vector(tax_table(ps_5strains_P)[,'ASV11'])
+
+#OTU table 
+export_5s_p=as.data.frame(otu_table(ps_5strains_P))
+names(export_5s_p)=ASV5_list
+
+
+#add in factors
+export_5s=cbind(export_5s_p,sample_data(ps_5strains_P))
+paired_time0=read.csv('crossfeeding/coexistance/succession_all/paired_time0_portions.csv',row.names = 1)
+names(paired_time0)=ASV11_swap(names(paired_time0))
+export_5s$time=as.numeric(as.character(export_5s$time))
+export_5s$cycle=as.numeric(as.character(export_5s$cycle))
+export_5s=rbind(export_5s,paired_time0)
+reshape_export_5s=melt(export_5s,id=c('comb','time','rep','substrate','cycle'))
+names(reshape_export_5s)[6]='ASV5'
+names(reshape_export_5s)[7]='percentage'
+reshape_export_5s$cycle=as.factor(reshape_export_5s$cycle)
+reshape_export_5s=arrange(reshape_export_5s,ASV5)
+reshape_export_5s$N=sapply(strsplit(as.character(reshape_export_5s$comb),'-'),"[",4)
+reshape_export_5s$F=sapply(strsplit(as.character(reshape_export_5s$comb),'-'),"[",5)
+#Clean for cross-contamination---a few samples suffer from cross-contamination (Oceano4 into samples suppossedly only containing Flavo), these samples are mostly in Quad3 R3, we thus remove reads of Oceano4 from samples labelled N0
+
+reshape_export_5s=reshape_export_5s %>% mutate(percentage=ifelse(N=='N0'& ASV5=='Neptunomonas4',0,percentage))
+reshape_export_5s=reshape_export_5s %>% mutate(percentage=ifelse(F=='F0'& ASV5=='Arenibacter71',0,percentage))
+
+reshape_export_5s$N=NULL
+reshape_export_5s$F=NULL
+
+#Remove two samples with apparent contamination
+reshape_export_5s=reshape_export_5s %>% filter(!(comb=='P0-V0-H90-N0-F10'& substrate=='Man'& rep %in% c('R2','R3')))
+reshape_export_5s_merge=reshape_export_5s %>% group_by(.dots=c('comb','time','substrate','cycle','ASV5')) %>% summarise(mean_percentage=mean(percentage),sd_percentage=sd(percentage))
+
+
+#split datasets by group
+
+
+reshape_export_5s_Quad1=reshape_export_5s_merge %>% filter(comb %in% quad_list_1)
+reshape_export_5s_Paired=reshape_export_5s_merge %>% filter(comb %in% paired_list$V1)
+reshape_export_5s_Quad2=reshape_export_5s_merge %>% filter(comb %in% quad_list_2)
+reshape_export_5s_Quad3=reshape_export_5s_merge %>% filter(comb %in% quad_list_3)
+
+reshape_export_5s_Paired$comb=factor(reshape_export_5s_Paired$comb,levels=paired_list$V1)
+reshape_export_5s_Quad1$comb=factor(reshape_export_5s_Quad1$comb,levels=quad_list_1)
+reshape_export_5s_Quad3$comb=factor(reshape_export_5s_Quad3$comb,levels=quad_list_3)
+
+reshape_export_5s_Paired_R1=reshape_export_5s %>% filter(comb %in% paired_list$V1 & rep %in% 'R1') 
+reshape_export_5s_Paired_R2=reshape_export_5s %>% filter(comb %in% paired_list$V1 & rep %in% 'R2') 
+reshape_export_5s_Paired_R3=reshape_export_5s %>% filter(comb %in% paired_list$V1 & rep %in% 'R3')
+
+
+reshape_export_5s_Quad3_R1=reshape_export_5s %>% filter(comb %in% quad_list_3 & rep %in% 'R1') 
+reshape_export_5s_Quad3_R2=reshape_export_5s %>% filter(comb %in% quad_list_3 & rep %in% 'R2') 
+reshape_export_5s_Quad3_R3=reshape_export_5s %>% filter(comb %in% quad_list_3 & rep %in% 'R3')
+
+reshape_export_5s_Quad1_R1=reshape_export_5s %>% filter(comb %in% quad_list_1 & rep %in% 'R1') 
+reshape_export_5s_Quad1_R2=reshape_export_5s %>% filter(comb %in% quad_list_1 & rep %in% 'R2') 
+reshape_export_5s_Quad1_R3=reshape_export_5s %>% filter(comb %in% quad_list_1 & rep %in% 'R3')
+
+reshape_export_5s_Paired_MC=reshape_export_5s %>% filter (comb %in% c("P25-V25-H25-N25-F0", "P25-V25-H25-N0-F25") & !cycle %in% c(6,7))
+
+
+```
+
+#Look at mock communities
+
+```{r}
+reshape_export_5s_Paired_MC_merge=reshape_export_5s_Paired_MC %>% group_by(.dots=c('comb','time','substrate','cycle','ASV5')) %>% summarise(mean_percentage=mean(percentage))
+
+ASV5palette=ASV5Palette[match(levels(reshape_export_5s_Paired_MC_merge$ASV5),ASV5list_new)]
+
+p_MC=ggplot(reshape_export_5s_Paired_MC_merge,aes(x=cycle,y=mean_percentage,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb)+theme_bw()+scale_fill_manual(values=ASV5palette)
+#We do not observe significant bias by cycle number so we can average all cycles
+
+
+```
+
+
+#Correcting for PCR bias in the long term data
+
+```{r}
+#1. select to look at first 48h succession or different cycles
+reshape_export_5s_Quad13=bind_rows(reshape_export_5s_Quad1,reshape_export_5s_Quad3)
+reshape_export_5s_Quad13_cyc1=reshape_export_5s_Quad13 %>% filter(cycle==1)
+reshape_export_5s_Quad13_cyc1_FE=reshape_export_5s_Quad13_cyc1 %>% filter(substrate=='FE')
+reshape_export_5s_Quad13_cyc1_Man=reshape_export_5s_Quad13_cyc1 %>% filter(substrate=='Man')
+
+
+reshape_export_5s_Quad13_cyc1_FE_N=reshape_export_5s_Quad13_cyc1_FE[grep('N1|N47|N89',reshape_export_5s_Quad13_cyc1_FE$comb),]
+reshape_export_5s_Quad13_cyc1_FE_F=reshape_export_5s_Quad13_cyc1_FE[grep('F1|F47|F89',reshape_export_5s_Quad13_cyc1_FE$comb),]
+
+#2. Correct with ratios mixed
+
+reshape_export_5s_Quad13_cyc1_FE_N_0h=reshape_export_5s_Quad13_cyc1_FE_N %>% filter(time==0 & ASV5!='Arenibacter71' )
+reshape_export_5s_Quad13_cyc1_FE_N_Nonly=reshape_export_5s_Quad13_cyc1_FE_N %>% filter(ASV5=='Neptunomonas4' )
+start_matrix_measured_N=matrix(reshape_export_5s_Quad13_cyc1_FE_N_0h$mean_percentage,nrow=4)
+
+start_matrix_theory_N= matrix(c(97,1,1,1,47,47,5,1,49,49,0.1,1,49,49,1,1,5,5,89,1,89,5,5,1,5,89,5,1,1,97,1,1,
+                                5,1,5,89,1,5,47,47,1,5,5,89,5,5,1,89),nrow=4)   #Sequence is VPHO
+start_matrix_theory_N_adj=matrix(start_matrix_theory_N,nrow=4)
+start_matrix_theory_N_adj[3,1:8]=start_matrix_theory_N_adj[3,1:8]*9.1/5.2   #This Halo was not corrected for the full 9.1 fold since it stained better than ususal
+start_matrix_theory_N_adj[3,9:12]=start_matrix_theory_N_adj[3,9:12]*9.1 #Seemed like the dye problem for the Quad1 groups and the Paired1&2 day of the experiment was minor, but there was a problem for Quad new 
+start_matrix_theory_N_adj=sweep(start_matrix_theory_N_adj,2,colSums(start_matrix_theory_N_adj),"/")*100
+
+ratioN=start_matrix_theory_N_adj/start_matrix_measured_N
+ratioN_norm=sweep(ratioN,2,ratioN[3,],"/")
+ratioN_geomean=apply(ratioN_norm,1,geoMean)   #This is the adjustment to use for all 16S communities
+
+#Look at how good the adjustment is
+start_matrix_measured_N_adj=sweep(start_matrix_measured_N,1,ratioN_geomean,"*")
+start_matrix_measured_N_adj=sweep(start_matrix_measured_N_adj,2,colSums(start_matrix_measured_N_adj),"/")*100
+
+
+start_matrix_measured_N_adj=as.data.frame(start_matrix_measured_N_adj)
+rownames(start_matrix_measured_N_adj)=ASV5_list[1:4]
+start_matrix_measured_N_adj$taxa=ASV5_list[1:4]
+reshape_start_matrix_measured_N_summary=melt(start_matrix_measured_N_adj,id.vars = 'taxa')
+names(reshape_start_matrix_measured_N_summary)=c('taxa','sample','abundance_adj')
+reshape_start_matrix_measured_N=melt(start_matrix_measured_N)
+reshape_start_matrix_measured_N_summary$abundance_measured=reshape_start_matrix_measured_N$value
+reshape_start_matrix_theory_N_adj=melt(start_matrix_theory_N_adj)
+reshape_start_matrix_measured_N_summary$abundance_theory=reshape_start_matrix_theory_N_adj$value
+#ASV11palette_2=ASV11palette[c(7,6,9,10,5,3,4,8,1,2)]
+reshape_start_matrix_measured_N_summary$taxa=factor(reshape_start_matrix_measured_N_summary$taxa,levels=ASV5_list)
+
+p_adjust_N=ggplot(reshape_start_matrix_measured_N_summary,aes(x=abundance_theory,y=abundance_adj,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV5palette)+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw(base_size = 18)+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% 16S sequencing, adjusted')
+
+p_measured_N=ggplot(reshape_start_matrix_measured_N_summary,aes(x=abundance_theory,y=abundance_measured,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV5palette)+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw(base_size = 18)+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% 16S sequencing, measured')
+
+#png('Figures_final/S12b_4sycomm_example_combined_N.png',res=300,width=4000,height=1200)
+plot_grid(p_measured_N,p_adjust_N,labels = NULL, align = 'h')
+#dev.off()
+
+
+#png('Figures_compiled/16S_correction/FACS_16S_correction_N.png',res=300,width=2000,height=2000)
+#par(mfrow=c(2,2))
+# for (i in 1:4){
+#   plot(start_matrix_theory_N_adj[i,],start_matrix_measured_N_adj[i,1:ncol(start_matrix_theory_N_adj)],col='red',xlim=c(0,100),ylim=c(0,100),xlab='% by FACS counts', ylab='% by 16S sequencing',main=ASV5_list[i],pch=19)
+#   points(start_matrix_theory_N_adj[i,],start_matrix_measured_N[i,],col='blue',pch=19)
+#   abline(0,1,lty=2)
+#   
+# }
+
+#dev.off()
+
+
+
+reshape_export_5s_Quad13_cyc1_FE_F_0h=reshape_export_5s_Quad13_cyc1_FE_F %>% filter(time==0 & ASV5!='Neptunomonas4' )
+reshape_export_5s_Quad13_cyc1_FE_F1_Fonly=reshape_export_5s_Quad13_cyc1_FE_F %>% filter(ASV5=='Arenibacter71' )
+start_matrix_measured_F=matrix(reshape_export_5s_Quad13_cyc1_FE_F_0h$mean_percentage,nrow=4)
+start_matrix_theory_F= matrix(c(97,1,1,1,47,47,5,1,49,49,0.1,1,49,49,1,1,5,5,89,1,89,5,5,1,5,89,5,1,1,97,1,1,
+                                5,1,5,89,1,5,47,47,1,5,5,89,5,5,1,89),nrow=4)
+start_matrix_theory_F_adj=matrix(start_matrix_theory_F,nrow=4)
+start_matrix_theory_F_adj[3,1:8]=start_matrix_theory_F_adj[3,1:8]*9.1/5.2
+start_matrix_theory_F_adj[3,9:12]=start_matrix_theory_F_adj[3,9:12]*9.1
+start_matrix_theory_F_adj=sweep(start_matrix_theory_F_adj,2,colSums(start_matrix_theory_F_adj),"/")*100
+
+ratioF=start_matrix_theory_F_adj/start_matrix_measured_F
+ratioF_norm=sweep(ratioF,2,ratioF[3,],"/")
+ratioF_geomean=apply(ratioF_norm,1,geoMean)   #This is the adjustment to use for all 16S communities
+
+#Look at how good the adjustment is
+start_matrix_measured_F_adj=sweep(start_matrix_measured_F,1,ratioF_geomean,"*")
+start_matrix_measured_F_adj=sweep(start_matrix_measured_F_adj,2,colSums(start_matrix_measured_F_adj),"/")*100
+
+start_matrix_measured_F_adj=as.data.frame(start_matrix_measured_F_adj)
+rownames(start_matrix_measured_F_adj)=ASV5_list[c(1:3,5)]
+start_matrix_measured_F_adj$taxa=ASV5_list[c(1:3,5)]
+reshape_start_matrix_measured_F_summary=melt(start_matrix_measured_F_adj,id.vars = 'taxa')
+names(reshape_start_matrix_measured_F_summary)=c('taxa','sample','abundance_adj')
+reshape_start_matrix_measured_F=melt(start_matrix_measured_F)
+reshape_start_matrix_measured_F_summary$abundance_measured=reshape_start_matrix_measured_F$value
+reshape_start_matrix_theory_F_adj=melt(start_matrix_theory_F_adj)
+reshape_start_matrix_measured_F_summary$abundance_theory=reshape_start_matrix_theory_F_adj$value
+#ASV11palette_2=ASV11palette[c(7,6,9,10,5,3,4,8,1,2)]
+reshape_start_matrix_measured_F_summary$taxa=factor(reshape_start_matrix_measured_F_summary$taxa,levels=ASV5_list)
+
+p_adjust_F=ggplot(reshape_start_matrix_measured_F_summary,aes(x=abundance_theory,y=abundance_adj,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV5palette[c(1:3,5)])+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw()+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% by 16S sequencing, adjusted')
+
+p_measured_F=ggplot(reshape_start_matrix_measured_F_summary,aes(x=abundance_theory,y=abundance_measured,color=taxa))+geom_point(size=2)+scale_color_manual(values = ASV5palette[c(1:3,5)])+geom_abline(intercept = 0, slope = 1,linetype=2)+theme_bw()+xlim(0,100)+ylim(0,100)+xlab('% by FACS counts')+ylab('% by 16S sequencing, measured')
+
+#png('Figures_compiled/16S_correction/4sycomm_example_combined_F.png',res=300,width=2400,height=800)
+plot_grid(p_measured_F,p_adjust_F, align = 'hv')
+#dev.off()
+
+
+
+#png('Figures_compiled/16S_correction/FACS_16S_correction_F_2.png',res=300,width=2000,height=700)
+#par(mfrow=c(1,4))
+# for (i in 1:4){
+#   plot(start_matrix_theory_F_adj[i,],start_matrix_measured_F_adj[i,1:ncol(start_matrix_theory_F_adj)],col='red',,xlim=c(0,100),ylim=c(0,100),
+#        xlab='% by FACS counts', ylab='% by 16S sequencing',main=ASV5_list[c(1:3,5)][i],pch=19)
+#   points(start_matrix_theory_F_adj[i,],start_matrix_measured_F[i,],col='blue',pch=19)
+#   abline(0,1,lty=2)
+# }
+#dev.off()
+
+ratioNF_geomean=c(sqrt(ratioN_geomean[1:3]*ratioF_geomean[1:3]),ratioN_geomean[4],ratioF_geomean[4])
+
+
+```
+#Quad plots, first cycle, for varying H 
+```{r}
+reshape_export_5s_Quad1_cyc1_FE_N1=reshape_export_5s_Quad13_cyc1_FE_N %>% filter(comb %in% quad_list_1) %>% group_by(.dots=c('comb','time','substrate','cycle')) %>% mutate(mean_percentage_m=mean_percentage*ratioNF_geomean)
+  
+reshape_export_5s_Quad1_cyc1_FE_N1=reshape_export_5s_Quad1_cyc1_FE_N1 %>% group_by(.dots=c('comb','time')) %>% mutate(mean_percentage_m=mean_percentage_m/sum(mean_percentage_m)*100) %>% filter(ASV5!="Arenibacter71")
+
+reshape_export_5s_Quad1_cyc1_FE_N1_for_plot=data.frame(reshape_export_5s_Quad1_cyc1_FE_N1)
+reshape_export_5s_Quad1_cyc1_FE_N1_for_plot$comb=gsub('-F0','',reshape_export_5s_Quad1_cyc1_FE_N1_for_plot$comb)
+reshape_export_5s_Quad1_cyc1_FE_N1_for_plot$comb=gsub('-H','-C',reshape_export_5s_Quad1_cyc1_FE_N1_for_plot$comb)
+
+reshape_export_5s_Quad1_cyc1_FE_F1=reshape_export_5s_Quad13_cyc1_FE_F %>% filter(comb %in% quad_list_1) %>% group_by(.dots=c('comb','time','substrate','cycle')) %>% mutate(mean_percentage_m=mean_percentage*ratioNF_geomean)
+  
+reshape_export_5s_Quad1_cyc1_FE_F1=reshape_export_5s_Quad1_cyc1_FE_F1 %>% group_by(.dots=c('comb','time')) %>% mutate(mean_percentage_m=mean_percentage_m/sum(mean_percentage_m)*100)
+
+
+
+##Area plots for first round succession, corrected
+p_quad_cyc1_FE_N1_m=ggplot(reshape_export_5s_Quad1_cyc1_FE_N1_for_plot,aes(x=time,y=mean_percentage_m,fill=ASV5))+
+  scale_x_continuous(expand = c(0, 0),breaks=c(0,5,10,24,48))+
+  geom_area(alpha=0.8)+facet_wrap(.~comb,nrow=2)+theme_bw()+scale_fill_manual(values=ASV5palette[c(1:4)])+xlab('time/h')+ylab('% abundance')+theme(legend.title = element_blank())
+
+# p_quad_cyc1_FE_F1_m=ggplot(reshape_export_5s_Quad1_cyc1_FE_F1,aes(x=time,y=mean_percentage_m,fill=ASV5))+
+#   scale_x_continuous(expand = c(0, 0),breaks=c(0,5,10,24,48))+
+#   geom_area(alpha=0.8)+facet_wrap(.~comb,nrow=2)+theme_bw()+scale_fill_manual(values=ASV5palette)+xlab('time/h')+ylab('% abundance')
+
+#png('Figures_final/S4_Quad_cyc1_FE_N1_m_title.png',width=3500,height=2000,res=300)
+p_quad_cyc1_FE_N1_m+theme(panel.spacing.x=unit(1, "lines"),text = element_text(size=18))
+#dev.off()
+
+# png('Figures_compiled/succession_corrected_082319/Quad_cyc1_FE_F1_m_title.png',width=3500,height=2000,res=300)
+# p_quad_cyc1_FE_F1_m+theme(panel.spacing.x=unit(1, "lines"),text = element_text(size=16))
+# dev.off()
+
+# png('Figures_compiled/succession_corrected_082319/Quad_cyc1_FE_N1_m.png',width=3000,height=2000,res=300)
+# p_quad_cyc1_FE_N1_m+theme(panel.spacing.x=unit(2, "lines"))+theme(strip.background = element_blank(),strip.text.x = element_blank(),legend.position = 'none',text = element_text(size=18))
+# dev.off()
+# 
+# png('Figures_compiled/succession_corrected_082319/Quad_cyc1_FE_F1_m.png',width=3000,height=2000,res=300)
+# p_quad_cyc1_FE_F1_m+theme(panel.spacing.x=unit(2, "lines"))+theme(strip.background = element_blank(),strip.text.x = element_blank(),legend.position = 'none',text = element_text(size=18))
+# dev.off()
+
+```
+
+#calculating betaNTI 
+```{r}
+# library(tibble)
+# reshape_export_5s_Quad1_cyc1_FE_N1_cast=reshape_export_5s_Quad1_cyc1_FE_N1 %>% select(comb,time,ASV5,mean_percentage_m) %>% mutate(combtime = paste(comb,time,sep='_')) %>%
+#   ungroup() %>%
+#   select(combtime,ASV5,mean_percentage_m)  %>%
+#   pivot_wider(names_from = ASV5, values_from = mean_percentage_m) %>% as.data.frame()
+# rownames(reshape_export_5s_Quad1_cyc1_FE_N1_cast)=reshape_export_5s_Quad1_cyc1_FE_N1_cast$combtime
+# reshape_export_5s_Quad1_cyc1_FE_N1_cast$combtime=NULL
+# spent_overlap_select=read.csv('spent_overlap_select.csv')
+# rownames(spent_overlap_select)=spent_overlap_select$X
+# spent_overlap_select$X=NULL
+# PD=1-spent_overlap_select
+# library(iCAMP)
+# nworker=4 # parallel computing thread number
+# rand.time=4 # usually use 1000 for real data.
+# bNRI=bNRIn.p(comm=reshape_export_5s_Quad1_cyc1_FE_N1_cast, dis=PD, nworker = nworker, memo.size.GB = 50,
+#              weighted = TRUE, rand = rand.time, output.bMPD = FALSE, 
+#              sig.index = "SES", unit.sum = NULL, correct.special = TRUE,
+#              detail.null = FALSE, special.method = "MPD")
+# 
+# bNRI_melt=melt(bNRI$index)
+# bNRI_melt$Var1=as.character(bNRI_melt$Var1)
+# bNRI_melt$sample_1=sapply(strsplit(bNRI_melt$Var1,split ="_"),"[[",1)
+# bNRI_melt$t_1=sapply(strsplit(bNRI_melt$Var1,split ="_"),"[[",2)
+# bNRI_melt$Var2=as.character(bNRI_melt$Var2)
+# bNRI_melt$sample_2=sapply(strsplit(bNRI_melt$Var2,split ="_"),"[[",1)
+# bNRI_melt$t_2=sapply(strsplit(bNRI_melt$Var2,split ="_"),"[[",2)
+# bNRI_melt_select=bNRI_melt %>% filter(sample_1==sample_2) %>% filter(t_2!=t_1) %>% 
+#   filter(t_1==0 | t_2==0) %>% filter(t_2==48) 
+# 
+# 
+# betadiv=vegdist(reshape_export_5s_Quad1_cyc1_FE_N1_cast,method = 'horn')
+# betadiv=as.matrix(betadiv)
+# betadiv_melt=melt(betadiv)
+# betadiv_melt$Var1=as.character(betadiv_melt$Var1)
+# betadiv_melt$sample_1=sapply(strsplit(betadiv_melt$Var1,split ="_"),"[[",1)
+# betadiv_melt$t_1=sapply(strsplit(betadiv_melt$Var1,split ="_"),"[[",2)
+# betadiv_melt$Var2=as.character(betadiv_melt$Var2)
+# betadiv_melt$sample_2=sapply(strsplit(betadiv_melt$Var2,split ="_"),"[[",1)
+# betadiv_melt$t_2=sapply(strsplit(betadiv_melt$Var2,split ="_"),"[[",2)
+# betadiv_melt_select_0=betadiv_melt %>% filter(sample_1!=sample_2) %>% filter(t_2==t_1) %>% 
+#   filter(t_1==0) 
+# betadiv_melt_select_5=betadiv_melt %>% filter(sample_1!=sample_2) %>% filter(t_2==t_1) %>% 
+#   filter(t_1==5) 
+# betadiv_melt_select_10=betadiv_melt %>% filter(sample_1!=sample_2) %>% filter(t_2==t_1) %>% 
+#   filter(t_1==10)
+# betadiv_melt_select_24=betadiv_melt %>% filter(sample_1!=sample_2) %>% filter(t_2==t_1) %>% 
+#   filter(t_1==24)
+# 
+# betadiv_melt_select_48=betadiv_melt %>% filter(sample_1!=sample_2) %>% filter(t_2==t_1) %>% 
+#   filter(t_1==48) 
+# 
+# 
+#   
+
+
+```
+
+
+
+#For identifying missing plots
+```{r,eval=FALSE}
+
+reshape_export_5s_Paired_R1=reshape_export_5s_Paired_R1%>% group_by(.dots=c('comb','time','substrate','cycle','rep')) %>% mutate(percentage_m=ifelse(time==0,percentage,percentage*ratioNF_geomean))
+  
+reshape_export_5s_Paired_R1=reshape_export_5s_Paired_R1 %>% group_by(.dots=c('comb','time','cycle','rep','substrate')) %>% mutate(percentage_m=percentage_m/sum(percentage_m,na.rm = T)*100)
+
+reshape_export_5s_Paired_R2=reshape_export_5s_Paired_R2%>% group_by(.dots=c('comb','time','substrate','cycle','rep')) %>% mutate(percentage_m=ifelse(time==0,percentage,percentage*ratioNF_geomean))
+  
+reshape_export_5s_Paired_R2=reshape_export_5s_Paired_R2 %>% group_by(.dots=c('comb','time','cycle','rep','substrate')) %>% mutate(percentage_m=percentage_m/sum(percentage_m,na.rm = T)*100)
+
+reshape_export_5s_Paired_R3=reshape_export_5s_Paired_R3%>% group_by(.dots=c('comb','time','substrate','cycle','rep')) %>% mutate(percentage_m=ifelse(time==0,percentage,percentage*ratioNF_geomean))
+  
+reshape_export_5s_Paired_R3=reshape_export_5s_Paired_R3 %>% group_by(.dots=c('comb','time','cycle','rep','substrate')) %>% mutate(percentage_m=percentage_m/sum(percentage_m,na.rm = T)*100)
+
+reshape_export_5s_Paired_R1$comb=factor(reshape_export_5s_Paired_R1$comb,levels=paired_list$V1)
+reshape_export_5s_Paired_R2$comb=factor(reshape_export_5s_Paired_R2$comb,levels=paired_list$V1)
+reshape_export_5s_Paired_R3$comb=factor(reshape_export_5s_Paired_R3$comb,levels=paired_list$V1)
+```
+
+##plotting coexistance plots 1
+```{r}
+#Possible extra step is needed to screen out contaminated samples--samples contaminated in the transfer process...
+
+#reshape_export_5s_Paired=reshape_export_5s_merge %>% filter(comb %in% paired_list$V1)
+
+reshape_export_5s_Paired_no_merge=reshape_export_5s %>% filter(comb %in% paired_list$V1) %>% mutate(cycle1=ifelse(time==0,'0',as.character(cycle)))
+
+
+
+##For the linear graphs, we show all cycles seperately
+reshape_export_5s_Paired_no_merge=reshape_export_5s_Paired_no_merge %>% group_by(.dots=c('comb','time','substrate','cycle1','rep')) %>% mutate(percentage_m=ifelse(time==0,percentage,percentage*ratioNF_geomean))
+  
+reshape_export_5s_Paired_no_merge=reshape_export_5s_Paired_no_merge %>% group_by(.dots=c('comb','time','cycle1','rep','substrate')) %>% mutate(percentage_m=percentage_m/sum(percentage_m,na.rm = T)*100)
+
+reshape_export_5s_Paired_merge=reshape_export_5s_Paired_no_merge %>% group_by(.dots=c('comb','time','substrate','cycle1','ASV5')) %>%summarise(mean_percentage=mean(percentage),mean_percentage_m=mean(percentage_m),sd_percentage_m=sd(percentage_m))
+
+paired_sub=reshape_export_5s_Paired_merge[reshape_export_5s_Paired_merge$comb==as.character(paired_list$V1[1]),]
+
+for (j in ASV5_list){
+    test=paired_sub %>% filter(ASV5==j & cycle1==0)
+    print(sum(test$mean_percentage)==0)
+    if (sum(test$mean_percentage)==0){
+      paired_sub$mean_percentage_m[paired_sub$ASV5==j]=NA
+      paired_sub$sd_percentage_m[paired_sub$ASV5==j]=NA
+      
+    }
+  }
+
+for (i in paired_list$V1[2:nrow(paired_list)]){
+  paired_sub1=reshape_export_5s_Paired_merge[reshape_export_5s_Paired_merge$comb==i,]
+  for (j in ASV5_list){
+    test=paired_sub1 %>% filter(ASV5==j & cycle1==0)
+    if (sum(test$mean_percentage)==0){
+      paired_sub1$mean_percentage_m[paired_sub1$ASV5==j]=NA
+      paired_sub1$sd_percentage_m[paired_sub1$ASV5==j]=NA
+    }
+  }
+  paired_sub=rbind(paired_sub,paired_sub1)
+  }
+```
+
+#plotting coexistance plots
+```{r,warning=FALSE, message=FALSE}
+##Paired plots
+paired_sub=paired_sub %>% group_by(.dots=c('comb','time','cycle1','substrate')) %>% mutate(mean_percentage_m=mean_percentage_m/sum(mean_percentage_m,na.rm = T)*100)
+reshape_export_5s_Paired_FE=paired_sub %>% filter(substrate=='FE')
+reshape_export_5s_Paired_Man=paired_sub %>% filter(substrate=='Man')
+
+
+paired_list$group=c(rep('Psychromonas14',8),rep('Vibrio1',6),rep('Cobetia10',4),rep('Neptunomonas4',2))
+paired_list$group2=c("P1","P1","P2","P2","P3","P3","P4","P4","V1","V1","V2","V2","V3","V3","H1","H1","H2","H2","N1","N1")
+paired_list$group3=c("PV","VP","PH","HP","PN","NP","PF","FP","VH","HV","VN","NV","VF","FV","HN","NH","HF","FH","NF","FN")
+  
+reshape_export_5s_Paired_FE_9=reshape_export_5s_Paired_FE %>% filter(cycle1==9)
+
+reshape_export_5s_Paired_FE_9=reshape_export_5s_Paired_FE_9 %>% mutate(comb1 = mgsub(paired_list$V1, paired_list$group,comb),comb2=mgsub(paired_list$V1, paired_list$group2,comb),comb3=mgsub(paired_list$V1, paired_list$group3,comb))
+
+reshape_export_5s_Paired_FE_9$comb2=factor(reshape_export_5s_Paired_FE_9$comb2,levels=c("P1","P2","P3","P4","V1","V2","V3","H1","H2","N1"))
+reshape_export_5s_Paired_FE_9_mean=reshape_export_5s_Paired_FE_9 %>% group_by(.dots=c("comb2",'ASV5','comb1')) %>% summarise(mean_mean_percentage_m=mean(mean_percentage_m))
+
+#fisher's exact test for p-values
+reshape_export_5s_Paired_FE_9_list=split(reshape_export_5s_Paired_FE_9,f=reshape_export_5s_Paired_FE_9$comb2)
+fe=function(x){
+  x=x %>% filter(!is.na(mean_percentage_m))
+  x=x %>% mutate(ASV5=as.character(ASV5))
+  l=split(x,f=x$ASV5)
+  fisher.test(l[[1]]$mean_percentage_m,l[[2]]$mean_percentage_m)$p.value
+}
+reshape_export_5s_Paired_FE_9_list_p=lapply(reshape_export_5s_Paired_FE_9_list,
+                                            function(x) fe(x))
+
+reshape_export_5s_Paired_FE_9_mean_P=reshape_export_5s_Paired_FE_9_mean %>% filter(comb1=='Psychromonas14')
+reshape_export_5s_Paired_FE_9_mean_P = reshape_export_5s_Paired_FE_9_mean_P %>%
+  filter(comb2!='P4')
+reshape_export_5s_Paired_FE_9_mean_V=reshape_export_5s_Paired_FE_9_mean %>% filter(comb1=='Vibrio1')
+reshape_export_5s_Paired_FE_9_mean_V = reshape_export_5s_Paired_FE_9_mean_V %>%
+  filter(comb2!='V3')
+reshape_export_5s_Paired_FE_9_mean_H=reshape_export_5s_Paired_FE_9_mean %>% filter(comb1=='Cobetia10')
+reshape_export_5s_Paired_FE_9_mean_H = reshape_export_5s_Paired_FE_9_mean_H %>%
+  filter(comb2!='H2')
+reshape_export_5s_Paired_FE_9_mean_N=reshape_export_5s_Paired_FE_9_mean %>% filter(comb1=='Neptunomonas4')
+
+p_paired_bar_P_FE=ggplot(reshape_export_5s_Paired_FE_9_mean_P,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(axis.text =element_text(color='black'),
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line.x=element_blank(),axis.ticks = element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('Relative abundance (%)')+xlab('')
+
+p_paired_bar_V_FE=ggplot(reshape_export_5s_Paired_FE_9_mean_V,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line=element_blank(),axis.ticks = element_blank(),axis.text.y =element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('')+xlab('')
+
+p_paired_bar_H_FE=ggplot(reshape_export_5s_Paired_FE_9_mean_H,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line=element_blank(),axis.ticks = element_blank(),axis.text.y =element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('')+xlab('')
+
+p_paired_bar_N_FE=ggplot(reshape_export_5s_Paired_FE_9_mean_N,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line=element_blank(),axis.ticks = element_blank(),axis.text.y =element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('')+xlab('')
+
+png('Figures_final/F4c_bar_graphs_FE_averaged_new_m.png',height=1500,width=1250,res=300)
+plot_grid(p_paired_bar_P_FE,
+          arrangeGrob(nullGrob(), p_paired_bar_V_FE, ncol=1, heights=c(1,2.15)),
+          arrangeGrob(nullGrob(), p_paired_bar_H_FE, ncol=1, heights=c(1.75,1)),
+     #     arrangeGrob(nullGrob(), p_paired_bar_N_FE, ncol=1, heights=c(2.6,1)),
+          nrow=1,labels = NULL,axis='b',rel_widths = c(1.5,1.2,1.2))
+dev.off()
+
+
+reshape_export_5s_Paired_Man_9=reshape_export_5s_Paired_Man %>% filter(cycle1==9)
+
+reshape_export_5s_Paired_Man_9=reshape_export_5s_Paired_Man_9 %>% mutate(comb1 = mgsub(paired_list$V1, paired_list$group,comb),comb2=mgsub(paired_list$V1, paired_list$group2,comb),comb3=mgsub(paired_list$V1, paired_list$group3,comb))
+
+reshape_export_5s_Paired_Man_9$comb2=factor(reshape_export_5s_Paired_Man_9$comb2,levels=c("P1","P2","P3","P4","V1","V2","V3","H1","H2","N1"))
+
+
+reshape_export_5s_Paired_Man_9_mean=reshape_export_5s_Paired_Man_9 %>% group_by(.dots=c("comb2",'ASV5','comb1')) %>% summarise(mean_mean_percentage_m=mean(mean_percentage_m,na.rm = T))
+reshape_export_5s_Paired_Man_9_mean_P=reshape_export_5s_Paired_Man_9_mean %>% filter(comb1=='Psychromonas14')
+reshape_export_5s_Paired_Man_9_mean_V=reshape_export_5s_Paired_Man_9_mean %>% filter(comb1=='Vibrio1')
+reshape_export_5s_Paired_Man_9_mean_H=reshape_export_5s_Paired_Man_9_mean %>% filter(comb1=='Cobetia10')
+reshape_export_5s_Paired_Man_9_mean_N=reshape_export_5s_Paired_Man_9_mean %>% filter(comb1=='Neptunomonas4')
+
+reshape_export_5s_Paired_Man_9_mean_P$comb2=factor(reshape_export_5s_Paired_Man_9_mean_P$comb2,levels=c("P1","P2","P3","P4"))
+reshape_export_5s_Paired_Man_9_mean_P=reshape_export_5s_Paired_Man_9_mean_P %>%
+  filter(comb2!="P4")
+reshape_export_5s_Paired_Man_9_mean_V$comb2=factor(reshape_export_5s_Paired_Man_9_mean_V$comb2,levels=c("V1","V2","V3"))
+reshape_export_5s_Paired_Man_9_mean_V=reshape_export_5s_Paired_Man_9_mean_V %>%
+  filter(comb2!="V3")
+reshape_export_5s_Paired_Man_9_mean_H$comb2=factor(reshape_export_5s_Paired_Man_9_mean_H$comb2,levels=c("H1","H2"))
+reshape_export_5s_Paired_Man_9_mean_H=reshape_export_5s_Paired_Man_9_mean_H %>%
+  filter(comb2!="H2")
+
+reshape_export_5s_Paired_Man_9_mean_N$comb2=factor(reshape_export_5s_Paired_Man_9_mean_N$comb2,levels=c("N1"))
+
+
+p_paired_bar_P_Man=ggplot(reshape_export_5s_Paired_Man_9_mean_P,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(axis.text =element_text(color='black'),
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line.x=element_blank(),axis.ticks = element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('Relative abundance (%)')+xlab('')
+
+p_paired_bar_V_Man=ggplot(reshape_export_5s_Paired_Man_9_mean_V,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line=element_blank(),axis.ticks = element_blank(),axis.text.y =element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('')+xlab('')
+
+p_paired_bar_H_Man=ggplot(reshape_export_5s_Paired_Man_9_mean_H,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line=element_blank(),axis.ticks = element_blank(),axis.text.y =element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('')+xlab('')
+
+p_paired_bar_N_Man=ggplot(reshape_export_5s_Paired_Man_9_mean_N,aes(x=comb1,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb2,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette,drop=F)+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_classic()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"),legend.position='none',
+  axis.line=element_blank(),axis.ticks = element_blank(),axis.text.y =element_blank(),
+  axis.text.x =element_blank(),
+  text = element_text(size=20))+ylab('')+xlab('')
+
+png('Figures_final/F4c_bar_graphs_Man_averaged_new_m.png',height=1500,width=1250,res=300)
+plot_grid(p_paired_bar_P_Man,
+          arrangeGrob(nullGrob(), p_paired_bar_V_Man, ncol=1, heights=c(1,2.15)),
+          arrangeGrob(nullGrob(), p_paired_bar_H_Man, ncol=1, heights=c(1.75,1)),
+   #       arrangeGrob(nullGrob(), p_paired_bar_N_Man, ncol=1, heights=c(2.6,1)),
+          nrow=1,labels = NULL,axis='b',rel_widths = c(1.5,1.2,1.2))
+dev.off()
+
+
+```
+
+#line graphs
+```{r,warning=FALSE, message=FALSE}
+
+reshape_export_5s_Paired_FE_1=reshape_export_5s_Paired_FE %>% mutate(comb1 = mgsub(paired_list$V1, paired_list$group,comb),comb2=mgsub(paired_list$V1, paired_list$group2,comb))
+reshape_export_5s_Paired_FE_1$comb2=factor(reshape_export_5s_Paired_FE_1$comb2,levels=c("P1","P2","P3","P4","V1","V2","V3","H1","H2","N1"))
+
+reshape_export_5s_Paired_FE_P=reshape_export_5s_Paired_FE_1 %>% filter(comb1=='Psychromonas14')
+reshape_export_5s_Paired_FE_V=reshape_export_5s_Paired_FE_1 %>% filter(comb1=='Vibrio1') 
+reshape_export_5s_Paired_FE_H=reshape_export_5s_Paired_FE_1 %>% filter(comb1=='Cobetia10') 
+reshape_export_5s_Paired_FE_N=reshape_export_5s_Paired_FE_1 %>% filter(comb1=='Neptunomonas4') 
+
+reshape_export_5s_Paired_FE_H$cycle1=factor(reshape_export_5s_Paired_FE_H$cycle1)
+reshape_export_5s_Paired_FE_N$cycle1=factor(reshape_export_5s_Paired_FE_N$cycle1)
+
+reshape_export_5s_Paired_Man_1=reshape_export_5s_Paired_Man %>% mutate(comb1 = mgsub(paired_list$V1, paired_list$group,comb),comb2=mgsub(paired_list$V1, paired_list$group2,comb))
+
+reshape_export_5s_Paired_Man_1$comb2=factor(reshape_export_5s_Paired_Man_1$comb2,levels=c("P1","P2","P3","P4","V1","V2","V3","H1","H2","N1"))
+reshape_export_5s_Paired_Man_1=reshape_export_5s_Paired_Man_1 %>% group_by(.dots=c("comb","cycle1")) %>% mutate(mean_percentage_m=mean_percentage_m/sum(mean_percentage_m,na.rm=T)*100)
+
+reshape_export_5s_Paired_Man_P=reshape_export_5s_Paired_Man_1 %>% filter(comb1=='Psychromonas14')
+reshape_export_5s_Paired_Man_V=reshape_export_5s_Paired_Man_1 %>% filter(comb1=='Vibrio1') 
+reshape_export_5s_Paired_Man_H=reshape_export_5s_Paired_Man_1 %>% filter(comb1=='Cobetia10') 
+reshape_export_5s_Paired_Man_N=reshape_export_5s_Paired_Man_1 %>% filter(comb1=='Neptunomonas4') 
+
+reshape_export_5s_Paired_Man_H$cycle1=factor(reshape_export_5s_Paired_Man_H$cycle1)
+reshape_export_5s_Paired_Man_N$cycle1=factor(reshape_export_5s_Paired_Man_N$cycle1)
+
+p_P_all_paired_FE_m=ggplot(reshape_export_5s_Paired_FE_P,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+dir.create('Figures_final/S9_parts/')
+png('Figures_final/S9_parts/P_all_paired_FE_m.png',width=900,height=1800,res=300)
+p_P_all_paired_FE_m
+dev.off()
+
+p_V_all_paired_FE_m=ggplot(reshape_export_5s_Paired_FE_V,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+png('Figures_final/S9_parts/V_all_paired_FE_m.png',width=1000,height=1500,res=300)
+p_V_all_paired_FE_m
+dev.off()
+
+p_H_all_paired_FE_m=ggplot(reshape_export_5s_Paired_FE_H,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  scale_x_discrete(drop=FALSE)+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+png('Figures_final/S9_parts/H_all_paired_FE_m.png',width=1000,height=1000,res=300)
+p_H_all_paired_FE_m
+dev.off()
+
+p_N_all_paired_FE_m=ggplot(reshape_export_5s_Paired_FE_N,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100))+
+  scale_x_discrete(drop=FALSE)+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+png('Figures_final/S9_parts/N_all_paired_FE_m.png',width=1000,height=550,res=300)
+p_N_all_paired_FE_m
+dev.off()
+
+p_P_all_paired_Man_m=ggplot(reshape_export_5s_Paired_Man_P,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101))+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+png('Figures_final/S9_parts/P_all_paired_Man_m.png',width=1000,height=2000,res=300)
+p_P_all_paired_Man_m
+dev.off()
+
+p_V_all_paired_Man_m=ggplot(reshape_export_5s_Paired_Man_V,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101))+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+png('Figures_final/S9_parts/V_all_paired_Man_m.png',width=1000,height=1500,res=300)
+p_V_all_paired_Man_m
+dev.off()
+
+p_H_all_paired_Man_m=ggplot(reshape_export_5s_Paired_Man_H,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101))+
+  scale_x_discrete(drop=FALSE)+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+png('Figures_final/S9_parts/H_all_paired_Man_m.png',width=1000,height=1000,res=300)
+p_H_all_paired_Man_m
+dev.off()
+
+
+p_N_all_paired_Man_m=ggplot(reshape_export_5s_Paired_Man_N,aes(x=cycle1,y=mean_percentage_m,color=ASV5))+geom_point(size=1,alpha=0.5)+
+  geom_line(aes(group=interaction(ASV5,comb)),size=1.7,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0.1)+
+  facet_wrap(~comb2,ncol=1)+scale_color_manual(values=ASV5palette)+scale_y_continuous(expand = c(0,0),limits=c(-1,101))+
+  scale_x_discrete(drop=FALSE)+
+  theme_bw()+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),panel.spacing = unit(1, "lines"))+ylab('% abundance of each taxa')
+
+png('Figures_compiled/coexist/082319_corrected/N_all_paired_Man_m.png',width=1000,height=550,res=300)
+p_N_all_paired_Man_m
+dev.off()
+
+
+```
+#Just for our visualization
+```{r,eval=FALSE,warning=FALSE, message=FALSE}
+p_paired_all_cyc_FE_m=ggplot(reshape_export_5s_Paired_FE,aes(x=cycle1,y=mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb,nrow=2,dir='v')+theme_bw()+scale_fill_manual(values=ASV5palette)
+
+
+png('Figures_compiled/coexist/082319_corrected/paired_all_cyc_FE_m.png',width=4000,height=1500,res=300)
+p_paired_all_cyc_FE_m+theme(legend.position = 'bottom')
+dev.off()
+
+p_paired_all_cyc_Man_m=ggplot(reshape_export_5s_Paired_Man,aes(x=cycle1,y=mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb,nrow=2,dir='v')+theme_bw()+scale_fill_manual(values=ASV5palette)
+
+
+png('Figures_compiled/coexist/082319_corrected/paired_all_cyc_Man_m.png',width=4000,height=1500,res=300)
+p_paired_all_cyc_Man_m+theme(legend.position = 'bottom')
+dev.off()
+
+```
+
+#bar graphs for Quad Coexistance
+```{r,warning=FALSE, message=FALSE}
+#t=0,t=48,cyc5 and cyc9
+
+reshape_export_5s_Quad13_cyc_all=reshape_export_5s_Quad13 %>% filter(cycle %in% c('5','8','9') | (cycle=="1" & time %in% c(0,48)))
+reshape_export_5s_Quad13_cyc_all=reshape_export_5s_Quad13_cyc_all %>% mutate(cycle1=ifelse(time==0,'0',as.character(cycle)))
+
+reshape_export_5s_Quad13_cyc_all=reshape_export_5s_Quad13_cyc_all %>% group_by(.dots=c('comb','time','substrate','cycle','cycle1')) %>% mutate(mean_percentage_m=mean_percentage*ratioNF_geomean,sd_percentage_m=sd_percentage*ratioNF_geomean)
+  
+reshape_export_5s_Quad13_cyc_all=reshape_export_5s_Quad13_cyc_all %>% group_by(.dots=c('comb','time','substrate','cycle','cycle1')) %>% mutate(sd_percentage_m=sd_percentage_m/sum(mean_percentage_m)*100,mean_percentage_m=mean_percentage_m/sum(mean_percentage_m)*100)
+
+reshape_export_5s_Quad13_cyc_all$comb=as.factor(reshape_export_5s_Quad13_cyc_all$comb)
+
+
+select_list_89=levels(reshape_export_5s_Quad13_cyc_all$comb)[grep('89',levels(reshape_export_5s_Quad13_cyc_all$comb))]
+select_list_47=levels(reshape_export_5s_Quad13_cyc_all$comb)[grep('47',levels(reshape_export_5s_Quad13_cyc_all$comb))]
+select_list_49=levels(reshape_export_5s_Quad13_cyc_all$comb)[grep('49',levels(reshape_export_5s_Quad13_cyc_all$comb))]
+
+select_list=c(select_list_89[c(8,10,12,6,7,9,11,5)])
+select_list_1=c(select_list_89[c(8,10,12,6,7,9,11,5)],select_list_47,select_list_49)
+
+reshape_export_5s_Quad13_all_FE=reshape_export_5s_Quad13_cyc_all %>% filter(substrate=='FE')
+reshape_export_5s_Quad13_all_FE_select=reshape_export_5s_Quad13_all_FE %>% filter(comb %in% select_list_1)
+reshape_export_5s_Quad13_all_FE_select$comb=factor(reshape_export_5s_Quad13_all_FE_select$comb,levels = select_list_1)
+reshape_export_5s_Quad13_all_Man=reshape_export_5s_Quad13_cyc_all %>% filter(substrate=='Man')
+reshape_export_5s_Quad13_all_Man_select=reshape_export_5s_Quad13_all_Man %>% filter(comb %in% select_list_1)
+reshape_export_5s_Quad13_all_Man_select$comb=factor(reshape_export_5s_Quad13_all_Man_select$comb,levels = select_list_1)
+
+reshape_export_5s_Quad13_all_FE_N=reshape_export_5s_Quad13_all_FE[-grep('N0',reshape_export_5s_Quad13_all_FE$comb),]
+reshape_export_5s_Quad13_all_Man_N=reshape_export_5s_Quad13_all_Man[-grep('N0',reshape_export_5s_Quad13_all_Man$comb),]
+# reshape_export_5s_Quad13_all_FE_select_N=reshape_export_5s_Quad13_all_FE_select[-grep('N0',reshape_export_5s_Quad13_all_FE_select$comb),]
+# reshape_export_5s_Quad13_all_Man_select_N=reshape_export_5s_Quad13_all_Man_select[-grep('N0',reshape_export_5s_Quad13_all_Man_select$comb),]
+# 
+# reshape_export_5s_Quad13_all_select_N=bind_rows(reshape_export_5s_Quad13_all_FE_select_N,reshape_export_5s_Quad13_all_Man_select_N) %>% filter(ASV5!="Arenibacter71" ) %>% mutate(mean_percentage_m=case_when(mean_percentage_m<0.01 ~ 0.01, TRUE ~ mean_percentage_m))
+
+reshape_export_5s_Quad13_all_N=bind_rows(reshape_export_5s_Quad13_all_FE_N,reshape_export_5s_Quad13_all_Man_N) %>% filter(ASV5!="Arenibacter71") %>% mutate(mean_percentage_m=case_when(mean_percentage_m<0.01 ~ 0.01, TRUE ~ mean_percentage_m))
+
+reshape_export_5s_Quad13_all_N_omit=reshape_export_5s_Quad13_all_N %>% filter( !(comb #%in% c('P5-V1-H47-N47-F0','P5-V5-H1-N89-F0',"P97-V1-H1-N1-F0","P1-V97-H1-N1-F0")))
+%in% c('P5-V5-H1-N89-F0','P5-V1-H5-N89-F0','P49-V49-H1-N1-F0','P1-V97-H1-N1-F0')))
+
+reshape_export_5s_Quad13_all_N_omit_FE=reshape_export_5s_Quad13_all_FE_N %>%
+  filter( !(comb %in% c('P5-V5-H1-N89-F0','P5-V1-H5-N89-F0','P49-V49-H1-N1-F0','P1-V97-H1-N1-F0')))
+
+reshape_export_5s_Quad13_all_N_omit_Man=reshape_export_5s_Quad13_all_Man_N %>%
+  filter( !(comb %in% c('P5-V5-H1-N89-F0','P5-V1-H5-N89-F0','P49-V49-H1-N1-F0','P1-V97-H1-N1-F0')))
+
+reshape_export_5s_Quad13_all_FE_N_mean9=reshape_export_5s_Quad13_all_FE_N %>%
+filter(cycle1=='9' & ASV5!="Arenibacter71") %>%group_by(ASV5) %>% summarize(mean_mean_percentage_m=mean(mean_percentage_m),sd_mean_percentage_m=sd(mean_percentage_m))
+
+reshape_export_5s_Quad13_all_FE_omit_N_mean9=reshape_export_5s_Quad13_all_N_omit_FE %>% filter(cycle1=='9' & ASV5!="Arenibacter71") %>%group_by(ASV5) %>% summarize(mean_mean_percentage_m=mean(mean_percentage_m),sd_mean_percentage_m=sd(mean_percentage_m))
+
+reshape_export_5s_Quad13_all_Man_omit_N_mean9=reshape_export_5s_Quad13_all_N_omit_Man %>% filter(cycle1=='9' & ASV5!="Arenibacter71") %>%group_by(ASV5) %>% summarize(mean_mean_percentage_m=mean(mean_percentage_m),sd_mean_percentage_m=sd(mean_percentage_m))
+
+reshape_export_5s_Quad13_all_N_omit_for_plot=data.frame(reshape_export_5s_Quad13_all_N_omit)
+reshape_export_5s_Quad13_all_N_omit_for_plot$comb=gsub('-H','-C',reshape_export_5s_Quad13_all_N_omit_for_plot$comb)
+reshape_export_5s_Quad13_all_N_omit_for_plot$comb=gsub('-F0','',reshape_export_5s_Quad13_all_N_omit_for_plot$comb)
+reshape_export_5s_Quad13_all_N_omit_for_plot$substrate=substrate_swap(reshape_export_5s_Quad13_all_N_omit_for_plot$substrate)
+
+reshape_export_5s_Quad13_all_N_omit_for_plot_FL=reshape_export_5s_Quad13_all_N_omit_for_plot %>% filter(substrate=='FL')
+reshape_export_5s_Quad13_all_N_omit_for_plot_Man=reshape_export_5s_Quad13_all_N_omit_for_plot %>% filter(substrate=='Mannitol')
+
+p_quad_all_cyc_line_omit_FE_m=ggplot(reshape_export_5s_Quad13_all_N_omit_for_plot_FL,aes(x=as.numeric(cycle1),y=mean_percentage_m,color=ASV5,shape=comb))+facet_grid(rows=vars(ASV5),cols = vars(substrate))+geom_point(size=2)+
+  geom_line(size=1.2,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0)+scale_y_log10(limits = c(5*10^-3, 150),breaks=c(0.01,0.1,1,10,100),labels = function(x) sprintf("%g", x))+scale_x_continuous(breaks = c(0,1,5,8,9))+scale_color_manual(values=ASV5palette)+scale_shape_manual(values=1:nlevels(reshape_export_5s_Quad13_all_N_omit$comb))+xlab('cycles')+ylab('Relative abundance (%)')+theme_bw()+theme(text = element_text(size=20),axis.text=element_text(color='black'),legend.position='none',strip.text = element_blank())
+
+p_quad_mean_cyc9_FE_bar_m=ggplot(reshape_export_5s_Quad13_all_FE_omit_N_mean9,aes(x=9,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+theme_classic()+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100),position = "right")+
+  ylab('Relative abundance (%)')+
+  theme(axis.ticks.y=element_blank(),axis.text=element_text(color='black'),
+        axis.text.x=element_blank(),axis.title=element_blank(),axis.ticks.x=element_blank(),legend.position = 'none',
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),text = element_text(size=18))+
+  scale_fill_manual(values=ASV5palette)
+
+png('Figures_final/F4b_quad_all_cyc_line_omit_FE_m.png',width=900,height=1600,res=300)
+p_quad_all_cyc_line_omit_FE_m
+dev.off() 
+
+png('Figures_final/F4b_quad_mean_cyc9_FE_bar_m.png',width=400,height=1200,res=300)
+p_quad_mean_cyc9_FE_bar_m
+dev.off() 
+
+p_quad_all_cyc_line_omit_Man_m=ggplot(reshape_export_5s_Quad13_all_N_omit_for_plot_Man,aes(x=as.numeric(cycle1),y=mean_percentage_m,color=ASV5,shape=comb))+facet_grid(rows=vars(ASV5),cols = vars(substrate))+geom_point(size=2)+
+  geom_line(size=1.2,alpha=0.6)+
+  geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0)+scale_y_log10(limits = c(5*10^-3, 150),breaks=c(0.01,0.1,1,10,100),labels = function(x) sprintf("%g", x))+scale_x_continuous(breaks = c(0,1,5,8,9))+scale_color_manual(values=ASV5palette)+scale_shape_manual(values=1:nlevels(reshape_export_5s_Quad13_all_N_omit$comb))+xlab('cycles')+ylab('Relative abundance (%)')+theme_bw()+theme(text = element_text(size=20),axis.text=element_text(color='black'),legend.position='none',strip.text = element_blank())
+
+p_quad_mean_cyc9_Man_bar_m=ggplot(reshape_export_5s_Quad13_all_Man_omit_N_mean9,aes(x=9,y=mean_mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+theme_classic()+
+  scale_y_continuous(expand = c(0,0),limits=c(-1,101),breaks = c(0,50,100),position = "right")+
+  ylab('Relative abundance (%)')+
+  theme(axis.ticks.y=element_blank(),axis.text=element_text(color='black'),
+        axis.text.x=element_blank(),axis.title=element_blank(),axis.ticks.x=element_blank(),legend.position = 'none',
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),text = element_text(size=18))+
+  scale_fill_manual(values=ASV5palette)
+
+png('Figures_final/F4b_quad_all_cyc_line_omit_Man_m.png',width=900,height=1600,res=300)
+p_quad_all_cyc_line_omit_Man_m
+dev.off() 
+
+png('Figures_final/F4b_quad_mean_cyc9_Man_bar_m.png',width=400,height=1200,res=300)
+p_quad_mean_cyc9_Man_bar_m
+dev.off() 
+
+# p_quad_all_cyc_line_omit_m=ggplot(reshape_export_5s_Quad13_all_N_omit_for_plot,aes(x=as.numeric(cycle1),y=mean_percentage_m,color=ASV5,shape=comb))+facet_grid(rows=vars(ASV5),cols = vars(substrate))+geom_point(size=2)+
+#    geom_line(size=1.2,alpha=0.6)+
+#    geom_errorbar(aes(ymin=mean_percentage_m-sd_percentage_m,ymax=mean_percentage_m+sd_percentage_m),width=0)+scale_y_log10(limits = c(10^-2, 110),breaks=c(0.01,0.1,1,10,100))+scale_x_continuous(breaks = c(0,1,5,8,9))+scale_color_manual(values=ASV5palette)+scale_shape_manual(values=1:nlevels(reshape_export_5s_Quad13_all_N_omit$comb))+xlab('cycles')+ylab('Relative abundance (%)')+theme_bw()+theme(legend.position="bottom",text = element_text(size=20),legend.box = "vertical",legend.title=element_blank(),strip.text.y = element_blank())+guides(color=guide_legend(nrow=2),shape=guide_legend(nrow=2))
+
+
+
+
+#values=c(ASV5palette[3],ASV5palette[1],ASV5palette[2],ASV5palette[4],'#80461b','#42daf5')
+
+reshape_export_5s_Quad13_all_FE_N=reshape_export_5s_Quad13_all_FE_N %>% filter(ASV5!='Arenibacter71')
+
+p_quad_all_cyc_FE_bar_N_m=ggplot(reshape_export_5s_Quad13_all_FE_N,aes(x=cycle1,y=mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb,nrow=1,dir='v')+theme_bw()+
+  theme(strip.background = element_blank(),
+  strip.text.x = element_blank(),text = element_text(size=18))+
+  scale_fill_manual(values=ASV5palette[1:4])+xlab('cycles')+ylab('% relative abuandance')
+
+reshape_export_5s_Quad13_all_Man_N=reshape_export_5s_Quad13_all_Man_N %>% filter(ASV5!='Arenibacter71')
+
+p_quad_all_cyc_Man_bar_N_m=ggplot(reshape_export_5s_Quad13_all_Man_N,aes(x=cycle1,y=mean_percentage_m,fill=ASV5))+
+  geom_bar(stat='identity',alpha=0.8)+facet_wrap(.~comb,nrow=1,dir='v')+theme_bw()+
+  theme(strip.background = element_blank(),
+  strip.text.x = element_blank(),text = element_text(size=18))+
+  scale_fill_manual(values=ASV5palette[1:4])+xlab('cycles')+ylab('% relative abuandance')
+
+
+png('Figures_final/S7_p_quad_all_cyc_FE_bar_N_m.png',width=5000,height=1000,res=300)
+p_quad_all_cyc_FE_bar_N_m
+dev.off()
+
+png('Figures_final/S7_p_quad_all_cyc_Man_bar_N_m.png',width=5000,height=1000,res=300)
+p_quad_all_cyc_Man_bar_N_m
+dev.off()
+
+```
+#select example plots for the Halo-Flavo/Halo-Oceano relationships
+```{r}
+
+reshape_export_5s_Quad1_cyc1_select_N1=reshape_export_5s_Quad1_cyc1_FE_N1 %>% filter(comb %in% c("P49-V49-H0.1-N1-F0","P47-V47-H5-N1-F0","P5-V5-H89-N1-F0") )
+reshape_export_5s_Quad1_cyc1_select_N1$comb=factor(reshape_export_5s_Quad1_cyc1_select_N1$comb,levels=c("P49-V49-H0.1-N1-F0","P47-V47-H5-N1-F0","P5-V5-H89-N1-F0"))
+reshape_export_5s_Quad1_cyc1_select_N1= reshape_export_5s_Quad1_cyc1_select_N1 %>% filter(ASV5!='Arenibacter71')
+
+p_quad_cyc1_FE_N1_select_m=ggplot(reshape_export_5s_Quad1_cyc1_select_N1,aes(x=time,y=mean_percentage_m,fill=ASV5))+
+  scale_x_continuous(expand = c(0, 0),breaks=c(0,24,48))+scale_y_continuous(expand = c(0, 0),breaks=c(0,50,100),limits=c(-1,101))+
+  geom_area(alpha=0.8)+facet_wrap(.~comb,ncol=1)+theme_bw()+scale_fill_manual(values=ASV5palette[1:4])+ylab('Relative abundance (%)')+xlab("time/h")+
+  theme(panel.spacing.x=unit(4, "lines"),legend.position = "right",legend.title = element_blank())+
+  guides(fill=guide_legend(nrow=4))+theme(
+  strip.background = element_blank(),
+  strip.text.x = element_blank(),text = element_text(size=14))
+png("Figures_final/F4a_quad_cyc1_FE_N1_select_m.png",height=1000,width=1200,res=300)
+p_quad_cyc1_FE_N1_select_m
+dev.off()
+```
+#Looking at aboslute cell counts in first round succession
+```{r}
+
+Quad1_cyc1_counts=read.csv('crossfeeding/coexistance/succession/counts/succession_summary_long_R.csv',row.names = 1)  
+
+export_5s_quad_cyc1_cc_match=merge(export_5s_p,Quad1_cyc1_counts,by=0)
+
+
+export_5s_cc=sweep(export_5s_quad_cyc1_cc_match[2:6],1,export_5s_quad_cyc1_cc_match[,7],'*')/100
+rownames(export_5s_cc)=export_5s_quad_cyc1_cc_match$Row.names
+export_5s_cc=merge(export_5s_cc,sample_data(ps_5strains_P),by=0)
+rownames(export_5s_cc)=export_5s_cc$Row.names
+export_5s_cc$Row.names=NULL
+
+export_5s_cc$time=as.numeric(as.character(export_5s_cc$time))
+export_5s_cc$cycle=as.numeric(as.character(export_5s_cc$cycle))
+
+reshape_export_5s_cc=melt(export_5s_cc,id=c('comb','time','rep','substrate','cycle'))
+names(reshape_export_5s_cc)[6]='ASV5'
+names(reshape_export_5s_cc)[7]='cell_count'
+reshape_export_5s_cc$cycle=as.factor(reshape_export_5s_cc$cycle)
+reshape_export_5s_cc=plyr::arrange(reshape_export_5s_cc,ASV5)
+
+
+
+reshape_export_5s_cc_Quad1_cyc1_N1=reshape_export_5s_cc[grep('N1',reshape_export_5s_cc$comb),]
+reshape_export_5s_cc_Quad1_cyc1_F1=reshape_export_5s_cc[grep('F1',reshape_export_5s_cc$comb),]
+
+reshape_export_5s_cc_Quad1_cyc1_N1=reshape_export_5s_cc_Quad1_cyc1_N1 %>%
+  group_by(.dots=c('comb','time','substrate','cycle','rep')) %>% mutate(cell_count_m=cell_count*ratioNF_geomean)
+
+reshape_export_5s_cc_Quad1_cyc1_F1=reshape_export_5s_cc_Quad1_cyc1_F1 %>% group_by(.dots=c('comb','time','substrate','cycle','rep')) %>% mutate(cell_count_m=cell_count*ratioNF_geomean)  
+ 
+
+reshape_export_5s_cc_Quad1_cyc1_N1=reshape_export_5s_cc_Quad1_cyc1_N1 %>% group_by(.dots=c('comb','time')) %>% mutate(cell_count_m=cell_count_m/sum(cell_count_m)*sum(cell_count))
+
+reshape_export_5s_cc_Quad1_cyc1_F1=reshape_export_5s_cc_Quad1_cyc1_F1 %>% group_by(.dots=c('comb','time')) %>% mutate(cell_count_m=cell_count_m/sum(cell_count_m)*sum(cell_count))
+
+```
+
+
+#Finding correlation between Halomonas and Neptunamonas 
+```{r}
+##This part is to find the ratios of V,P,H in early time points| 
+
+reshape_export_5s_not_merged_Quad1_FE=reshape_export_5s %>% filter(comb %in% quad_list$V1) %>% filter(substrate %in% 'FE')
+reshape_export_5s_not_merged_Quad1_FE_N1=reshape_export_5s_not_merged_Quad1_FE[grep('N1',reshape_export_5s_not_merged_Quad1_FE$comb),]
+reshape_export_5s_not_merged_Quad1_FE_F1=reshape_export_5s_not_merged_Quad1_FE[grep('F1',reshape_export_5s_not_merged_Quad1_FE$comb),]
+
+
+
+reshape_export_5s_Quad1_cyc1_FE_N1_Halo10=reshape_export_5s_not_merged_Quad1_FE_N1 %>% filter(ASV5=='Cobetia10'&time %in% c(0)) %>% group_by(.dots=c("comb","rep"))  %>% summarise(percent_Halo10=mean(percentage))
+
+reshape_export_5s_Quad1_cyc1_FE_N1_Vib1=reshape_export_5s_not_merged_Quad1_FE_N1 %>% filter(ASV5=='Vibrio1'&time %in% c(0)) %>% group_by(.dots=c("comb","rep"))  %>% summarise(percent_Vib1=mean(percentage)) 
+
+reshape_export_5s_Quad1_cyc1_FE_N1_Psychro14=reshape_export_5s_not_merged_Quad1_FE_N1 %>% filter(ASV5=='Psychromonas14'&time %in% c(0))%>% group_by(.dots=c("comb","rep"))  %>% summarise(percent_Psychro14=mean(percentage)) 
+
+reshape_export_5s_Quad1_cyc1_FE_N1_Halo10$comb_rep=paste(reshape_export_5s_Quad1_cyc1_FE_N1_Halo10$comb,reshape_export_5s_Quad1_cyc1_FE_N1_Halo10$rep,sep="-")
+reshape_export_5s_Quad1_cyc1_FE_N1_Vib1$comb_rep=paste(reshape_export_5s_Quad1_cyc1_FE_N1_Vib1$comb,reshape_export_5s_Quad1_cyc1_FE_N1_Vib1$rep,sep="-")
+reshape_export_5s_Quad1_cyc1_FE_N1_Psychro14$comb_rep=paste(reshape_export_5s_Quad1_cyc1_FE_N1_Psychro14$comb,reshape_export_5s_Quad1_cyc1_FE_N1_Psychro14$rep,sep="-")
+
+
+df_list_N1=list(reshape_export_5s_Quad1_cyc1_FE_N1_Halo10,reshape_export_5s_Quad1_cyc1_FE_N1_Vib1,reshape_export_5s_Quad1_cyc1_FE_N1_Psychro14)
+reshape_export_5s_Quad1_cyc1_FE_N1_4s=Reduce(function(d1, d2) merge(d1,d2,by='comb_rep'), df_list_N1)
+reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_sum=reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_Halo10+reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_Psychro14+reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_Vib1
+reshape_export_5s_Quad1_cyc1_FE_N1_4s$npercent=(reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_Halo10*0.055+
+ reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_Vib1*0.092+reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_Psychro14*0.113)*95710388.5/100
+reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_ratio=reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_Halo10/reshape_export_5s_Quad1_cyc1_FE_N1_4s$percent_sum
+
+
+
+reshape_export_5s_Quad1_cyc1_FE_N1_4s_mean=reshape_export_5s_Quad1_cyc1_FE_N1_4s %>% group_by(comb) %>% summarise(mean_npercent=mean(npercent),sd_npercent=sd(npercent),mean_ratio=mean(percent_ratio),sd_ratio=sd(percent_ratio))
+
+reshape_export_5s_cc_Quad1_cyc1_FE_N1_Oceano_mean=reshape_export_5s_cc_Quad1_cyc1_N1 %>% filter(ASV5=='Neptunomonas4'&  substrate=='FE',time %in% c(48),!comb %in% c('P1-V97-H1-N1-F1')) %>% group_by(.dots=c("comb","rep"))%>% summarise(max_cc_m=max(cell_count_m),mean_cc_m=mean(cell_count_m)) %>% group_by(comb) %>% summarise(mean_max_cc_m=mean(max_cc_m),sd_max_cc_m=sd(max_cc_m),mean_mean_cc_m=mean(mean_cc_m),sd_mean_cc_m=sd(mean_cc_m))
+
+reshape_export_5s_Quad1_cyc1_FE_N1_4s_mean_all=merge(reshape_export_5s_Quad1_cyc1_FE_N1_4s_mean,reshape_export_5s_cc_Quad1_cyc1_FE_N1_Oceano_mean,by='comb')
+
+#,!comb %in% c('P1-V97-H1-N1-F0')
+
+p_predict_oceano_m=ggplot(reshape_export_5s_Quad1_cyc1_FE_N1_4s_mean_all,aes(y=mean_mean_cc_m,x=mean_ratio))+geom_point(color=ASV5palette[4],pch=19,size=4)+geom_smooth(method = "lm",linetype=2,color='black',alpha=0.5,se=F)+geom_errorbar(aes(ymax=mean_mean_cc_m+sd_mean_cc_m,ymin=mean_mean_cc_m-sd_mean_cc_m),width=0,color=ASV5palette[4],alpha=0.5)+geom_errorbarh(aes(xmax=mean_ratio+sd_ratio,xmin=mean_ratio-sd_ratio),height=0,color=ASV5palette[4],alpha=0.5)+theme_classic(base_size = 20)+xlab("Cobetia10/(Vibrio1+Psychromonas14+Cobetia10)")+ylab('Neptunomonas4 cells/mL')+scale_x_log10(limits=c(0.001,1))
+
+
+png("Figures_final/F4a_predict_oceano_m_2.png",height=1200,width = 2400,res=300)
+p_predict_oceano_m
+dev.off()
+
+
+
+reg_portions=lm(mean_mean_cc_m~log10(mean_ratio),data=reshape_export_5s_Quad1_cyc1_FE_N1_4s_mean_all)
+summary(reg_portions)
+```
+
+

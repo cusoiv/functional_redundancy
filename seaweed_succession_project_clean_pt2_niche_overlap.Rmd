@@ -1,0 +1,534 @@
+---
+title: "seaweed_succession_project_clean_pt2_niche_overlaps"
+author: "Xiaoqian Yu"
+date: "2022-10-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr:: opts_knit$set(root.dir = "C:/Users/Xiaoqian/Desktop/seaweed/FE_enrich")
+```
+
+##import libraries
+```{r,warning=FALSE, message=FALSE}
+library(ggplot2)
+library(RColorBrewer)
+library(scales)
+library(stringr)
+library(reshape)
+library(reshape2)
+library(dplyr)
+library(qdap)
+library(cowplot)
+library(corrplot)
+library(growthrates)
+library(grid)
+library(gridExtra)
+library(EnvStats)
+library(lattice)
+library(ggpubr)
+library(ggpmisc)
+library(KEGGREST)
+```
+
+#Short to long names
+```{r}
+short_names=c("Psychro9","Psychro14","Vibrio1","Vibrio2","Pseudo5","Halo10","Rhodo26","Altero38","Flavo71","Oceano4")
+long_names=c("Psychromonas9","Psychromonas14","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+
+short_to_long=function(x){
+  y=mgsub(short_names,long_names,x)
+  return(y)
+}
+
+```
+
+#read in ASV5Palette for genus
+```{r}
+
+ASV5Palette_1=read.csv('color_palettes/ASV5Palette_genus.csv',row.names = 1)
+ASV5Palette=ASV5Palette_1$ASV5Palette
+
+```
+
+#read in Burkholder results
+```{r}
+burkholder=read.csv('crossfeeding/Burkholder/burkholder_10strains.csv',row.names = 1)
+burkholder[is.na(burkholder)]=0
+
+burkholder_10strains=burkholder[1:10,]
+burkholder_10strains_control=burkholder[1:10,11:12]
+
+
+#png('Figures_final/S5_Burkholder.png',width = 1700,height = 1500,res=300)
+corrplot(as.matrix(burkholder_10strains),method = "color",col.lim = c(0,1),tl.col = 'black',cl.cex = 1,outline = T)
+#dev.off()
+
+
+```
+
+
+##Niche overlap plots 5 days - 5 days
+```{r}
+
+max_raw=read.csv('crossfeeding/FACS/121318_crossfeeding_redo/raw_import_R_bead_plate_normalized_updated_090219.csv')
+max_list=rowMeans(max_raw[,2:4],na.rm = T)
+max_sd_list=apply(max_raw[,2:4],1,function(x) sd(x,na.rm = T))
+
+#max_list=read.csv('crossfeeding/FACS/121318_crossfeeding_redo/max_summary_import_R_bead_plate_normalized_updated_090219.csv')
+#max_sd_list=read.csv('crossfeeding/FACS/121318_crossfeeding_redo/sd_max_summary_import_R_bead_plate_normalized_updated_090219.csv')
+
+max_matrix<- matrix(as.matrix(max_list), nrow = 12, byrow = TRUE)
+max_sd_matrix<- matrix(as.matrix(max_sd_list), nrow = 12, byrow = TRUE)
+
+max_matrix_ratio=max_matrix/max_matrix[,12]   #normalize by last column which is full growth in non spent media
+max_matrix_ratio_percent_error=((max_sd_matrix/max_matrix)^2+(max_sd_matrix[,12]/max_matrix[,12])^2)^0.5  #error passing
+
+#remove last column which is just full growth in non-spent media
+max_matrix_ratio=max_matrix_ratio[c(1:11),c(1:11)]
+max_matrix_ratio_percent_error=max_matrix_ratio_percent_error[c(1:11),c(1:11)]
+
+#reorder so that it fits in the early/late groups
+max_matrix_ratio_reorder=max_matrix_ratio[c(1,3,5,7,9,11,2,4,6,8,10),c(1,3,5,7,9,11,2,4,6,8,10)]
+max_matrix_ratio_percent_error_reorder=max_matrix_ratio_percent_error[c(1,3,5,7,9,11,2,4,6,8,10),c(1,3,5,7,9,11,2,4,6,8,10)]
+
+#convert percent error to sd
+max_matrix_ratio_reorder_sd=max_matrix_ratio_reorder*max_matrix_ratio_percent_error_reorder
+
+#This is for the corrplots
+max_matrix_ratio_reorder=as.data.frame(max_matrix_ratio_reorder)
+max_matrix_ratio_reorder_sd=as.data.frame(max_matrix_ratio_reorder_sd)
+
+names(max_matrix_ratio_reorder)=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+rownames(max_matrix_ratio_reorder)=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+
+max_matrix_ratio_reorder_noVib1S=max_matrix_ratio_reorder[-3,-3]
+
+max_matrix_ratio_reorder_noVib1S_1=max_matrix_ratio_reorder_noVib1S[c(1,2,3,4,5,6,10,7,8,9),c(1,2,3,4,5,6,10,7,8,9)]
+
+max_matrix_ratio_reorder_noVib1S_2=max_matrix_ratio_reorder_noVib1S[c(1,2,3,4,5,6,10,8,9),c(1,2,3,4,5,6,10,8,9)]
+
+spent_overlap=1-max_matrix_ratio_reorder_noVib1S_2
+
+#This is for the bar plots
+max_matrix_ratio_reorder_2=as.data.frame(max_matrix_ratio_reorder)
+max_matrix_ratio_reorder_sd_2=as.data.frame(max_matrix_ratio_reorder_sd)
+
+
+names(max_matrix_ratio_reorder_2)=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+max_matrix_ratio_reorder_2$growth=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+
+names(max_matrix_ratio_reorder_sd_2)=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+max_matrix_ratio_reorder_sd_2$growth=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+
+#remove the Vib1.S 
+
+max_matrix_ratio_reorder_2_noVib1S=max_matrix_ratio_reorder_2[-3,-3]
+max_matrix_ratio_reorder_sd_2_noVib1S=max_matrix_ratio_reorder_sd_2[-3,-3]
+
+#reorder so that the Halo and Oceano are together, and remove the Celeribacter26
+max_matrix_ratio_reorder_2_noVib1S=max_matrix_ratio_reorder_2_noVib1S[c(1,2,3,4,5,6,10,8,9),c(1,2,3,4,5,6,10,8,9,11)]
+max_matrix_ratio_reorder_sd_2_noVib1S=max_matrix_ratio_reorder_sd_2_noVib1S[c(1,2,3,4,5,6,10,8,9),c(1,2,3,4,5,6,10,8,9,11)]
+
+max_matrix_ratio_reorder_2_no_Vib1S_reshaped=melt(max_matrix_ratio_reorder_2_noVib1S,id='growth')
+max_matrix_ratio_reorder_sd_2_noVib1S_reshaped=melt(max_matrix_ratio_reorder_sd_2_noVib1S,id='growth')
+names(max_matrix_ratio_reorder_2_no_Vib1S_reshaped)=c('growth','spent media', 'fraction growth')
+names(max_matrix_ratio_reorder_sd_2_noVib1S_reshaped)=c('growth','spent media', 'fraction growth')
+
+max_matrix_ratio_reorder_2_no_Vib1S_reshaped$fraction_overlap=1-max_matrix_ratio_reorder_2_no_Vib1S_reshaped$`fraction growth`
+max_matrix_ratio_reorder_2_no_Vib1S_reshaped$sd=max_matrix_ratio_reorder_sd_2_noVib1S_reshaped$`fraction growth`
+
+
+max_matrix_ratio_reorder_2_no_Vib1S_reshaped$growth=factor(max_matrix_ratio_reorder_2_no_Vib1S_reshaped$growth,levels=
+                                                             unique(max_matrix_ratio_reorder_2_no_Vib1S_reshaped$`spent media`))
+
+spent_overlap_bar=ggplot(max_matrix_ratio_reorder_2_no_Vib1S_reshaped,aes(x=`spent media`,y=fraction_overlap,fill=fraction_overlap))+geom_bar(stat='identity',alpha=0.8)+geom_errorbar(aes(ymin=fraction_overlap-sd,ymax=fraction_overlap+sd,color=fraction_overlap),width=0.2)+theme(axis.text.x = element_text(angle = 90))+
+  scale_color_gradientn(colours = c(rev(brewer.pal(11,"BrBG"))))+xlab('Spent Media')+ylab('Fraction overlap')+scale_y_continuous(breaks = c(0,0.5,1))+
+  scale_fill_gradientn(colours = c(rev(brewer.pal(11,"BrBG"))))+facet_wrap(~growth,ncol=1,strip.position="left")+theme_bw()
+
+#png('Figures_final/S6_spent_overlap_bar_plots_9strains.png',width = 3800,height = 3800,res=300)
+spent_overlap_bar
+#dev.off()
+
+#png('Figures_final/F2a_spent_overlap_no_cluster_122018_bead_plate_norm_9strains.png',width = 2000,height = 2000,res=300)
+corrplot(as.matrix(spent_overlap),method = 'color',col.lim = c(0,1),col = rev(COL2('BrBG')),
+         tl.col = 'black',cl.cex = 1,outline = T,is.corr = FALSE)
+#dev.off()
+
+spent_overlap_select=spent_overlap[c(2,3,6,7),c(2,3,6,7)]
+
+#write.csv(spent_overlap_select,'spent_overlap_select.csv')
+
+```
+##Some quantification
+```{r}
+spent_overlap_1=data.frame(spent_overlap)
+diag(spent_overlap_1)=NA
+spent_overlap_1=spent_overlap_1[-9,-9]
+mean(as.matrix(spent_overlap_1),na.rm = T)
+sd(as.matrix(spent_overlap_1),na.rm = T)
+
+mean(as.matrix(spent_overlap_1)[1:5,1:5],na.rm = T)
+sd(as.matrix(spent_overlap_1)[1:5,1:5],na.rm = T)
+
+mean(as.matrix(spent_overlap_1)[6:7,6:7],na.rm = T)
+sd(as.matrix(spent_overlap_1)[6:7,6:7],na.rm = T)
+
+mean(c(as.matrix(spent_overlap_1)[6:7,8],as.matrix(spent_overlap_1)[8,6:7]),na.rm = T)
+sd(c(as.matrix(spent_overlap_1)[6:7,8],as.matrix(spent_overlap_1)[8,6:7]),na.rm = T)
+
+mean(c(as.matrix(spent_overlap)[6:7,9],as.matrix(spent_overlap)[9,6:7]),na.rm = T)
+sd(c(as.matrix(spent_overlap)[6:7,9],as.matrix(spent_overlap)[9,6:7]),na.rm = T)
+
+```
+
+#niche overlap 5days-48h
+```{r,eval=FALSE}
+max_list_48h=read.csv('crossfeeding/FACS/121318_crossfeeding_redo/max_summary_import_R_bead_plate_normalized_first_48h.csv')
+
+max_matrix_48h<- matrix(as.matrix(max_list_48h), nrow = 12, byrow = TRUE)
+max_matrix_48h_ratio=max_matrix_48h/max_matrix[,12]
+
+
+#remove last column which is just full growth
+max_matrix_48h_ratio=max_matrix_48h_ratio[c(1:11),c(1:11)]
+
+
+#reorder so that it fits in the early/late groups
+max_matrix_48h_ratio_reorder=max_matrix_48h_ratio[c(1,3,5,7,9,11,2,4,6,8,10),c(1,3,5,7,9,11,2,4,6,8,10)]
+
+#This is for the corrplots
+max_matrix_48h_ratio_reorder=as.data.frame(max_matrix_48h_ratio_reorder)
+
+
+names(max_matrix_48h_ratio_reorder)=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Rhodo26","Alteromonas38","Arenibacter71","Neptunomonas4")
+rownames(max_matrix_48h_ratio_reorder)=c("Psychromonas9","Psychromonas14","Vibrio1.S","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Rhodo26","Alteromonas38","Arenibacter71","Neptunomonas4")
+
+max_matrix_48h_ratio_reorder_noVib1S=max_matrix_48h_ratio_reorder[-3,-3]
+
+max_matrix_48h_ratio_reorder_noVib1S_1=max_matrix_48h_ratio_reorder_noVib1S[c(1,2,3,4,5,6,10,8,9),c(1,2,3,4,5,6,10,8,9)]
+
+spent_overlap_48h=1-max_matrix_48h_ratio_reorder_noVib1S_1
+spent_overlap_48h[spent_overlap_48h<0]=0
+
+
+```
+
+
+##niche overlap plots for 5 strains -- compare between different media and times
+```{r}
+max_matrix_long_5s=read.csv('crossfeeding/FACS/032919_4strains_crossfeeding_counts/crossfeeding_counts_summary_long_format_R_updated.csv')
+max_matrix_long_5s$spent.media=short_to_long(max_matrix_long_5s$spent.media)
+max_matrix_long_5s$taxa=short_to_long(max_matrix_long_5s$taxa)
+
+max_matrix_5s_merged=max_matrix_long_5s %>% group_by(.dots=c('substrate','media','spent.media','taxa')) %>%
+  summarise(mean_cc=mean(cell.count,na.rm = T),sd_cc=sd(cell.count,na.rm=T))
+
+max_matrix_5s_merged_BMM_FE=max_matrix_5s_merged %>% filter(media=='BMM',substrate=='FE')
+max_matrix_5s_merged_BMM_Man=max_matrix_5s_merged %>% filter(media=='BMM',substrate=='Man')
+max_matrix_5s_merged_TRMM_FE=max_matrix_5s_merged %>% filter(media=='TRMM',substrate=='FE')
+max_matrix_5s_merged_TRMM_Man=max_matrix_5s_merged %>% filter(media=='TRMM',substrate=='Man')
+
+
+
+max_matrix_5s_merged_BMM_FE_ratio=max_matrix_5s_merged_BMM_FE %>% group_by(taxa) %>% mutate(mean_cc_ratio=mean_cc/mean_cc[spent.media=='NF'],sd_percentage_ratio=((sd_cc/mean_cc)^2+(sd_cc[spent.media=='NF']/mean_cc[spent.media=='NF'])^2)^0.5)
+max_matrix_5s_merged_BMM_FE_ratio$sd_ratio=max_matrix_5s_merged_BMM_FE_ratio$mean_cc_ratio*max_matrix_5s_merged_BMM_FE_ratio$sd_percentage_ratio
+max_matrix_5s_merged_BMM_FE_ratio_no_NF=max_matrix_5s_merged_BMM_FE_ratio %>% filter(spent.media!='NF')
+
+recast_BMM_FE=acast(max_matrix_5s_merged_BMM_FE_ratio_no_NF,taxa~spent.media,value.var='mean_cc_ratio')
+recast_BMM_FE=recast_BMM_FE[c(4,5,2,3,1),c(4,5,2,3,1)]
+recast_BMM_FE_sd=acast(max_matrix_5s_merged_BMM_FE_ratio_no_NF,taxa~spent.media,value.var='sd_ratio')
+recast_BMM_FE_sd=recast_BMM_FE_sd[c(4,5,2,3,1),c(4,5,2,3,1)]
+spent_overlap_BMM_FE=1-recast_BMM_FE
+spent_overlap_BMM_FE_4s=spent_overlap_BMM_FE[1:4,1:4]
+
+
+
+max_matrix_5s_merged_TRMM_FE_ratio=max_matrix_5s_merged_TRMM_FE %>% group_by(taxa) %>% mutate(mean_cc_ratio=mean_cc/mean_cc[spent.media=='NF'],sd_percentage_ratio=((sd_cc/mean_cc)^2+(sd_cc[spent.media=='NF']/mean_cc[spent.media=='NF'])^2)^0.5)
+max_matrix_5s_merged_TRMM_FE_ratio$sd_ratio=max_matrix_5s_merged_TRMM_FE_ratio$mean_cc_ratio*max_matrix_5s_merged_TRMM_FE_ratio$sd_percentage_ratio
+max_matrix_5s_merged_TRMM_FE_ratio_no_NF=max_matrix_5s_merged_TRMM_FE_ratio %>% filter(spent.media!='NF')
+
+recast_TRMM_FE=acast(max_matrix_5s_merged_TRMM_FE_ratio_no_NF,taxa~spent.media,value.var='mean_cc_ratio')
+recast_TRMM_FE=recast_TRMM_FE[c(4,5,2,3,1),c(4,5,2,3,1)]
+recast_TRMM_FE_sd=acast(max_matrix_5s_merged_TRMM_FE_ratio_no_NF,taxa~spent.media,value.var='sd_ratio')
+recast_TRMM_FE_sd=recast_TRMM_FE_sd[c(4,5,2,3,1),c(4,5,2,3,1)]
+
+spent_overlap_TRMM_FE=1-recast_TRMM_FE
+spent_overlap_TRMM_FE_1=spent_overlap_TRMM_FE[1:4,1:4]
+
+#png('Figures_compiled/spent_media/spent_overlap_TRMM_FE.png',width=2000,height=2000,res=300)
+corrplot(as.matrix(spent_overlap_TRMM_FE),method = 'pie',col.lim = c(0,1),col=c(brewer.pal(11,"BrBG"),rev(brewer.pal(11,"BrBG"))),tl.col = 'black',tl.cex = 1.5,cl.cex = 1.2,cl.align.text="l")
+#dev.off()
+
+#png('Figures_compiled/spent_media/spent_overlap_TRMM_FE_4s.png',width=2000,height=2000,res=300)
+corrplot(as.matrix(spent_overlap_TRMM_FE_1),method = 'pie',col.lim = c(0,1),col=c(brewer.pal(11,"BrBG"),rev(brewer.pal(11,"BrBG"))),tl.col = 'black',tl.cex = 1.5,cl.cex = 1.2,cl.align.text="l")
+#dev.off()
+
+recast_TRMM_FE_remelt=melt(recast_TRMM_FE)
+names(recast_TRMM_FE_remelt)[3]="mean_cc_TRMM_FE"
+recast_BMM_FE_remelt=melt(recast_BMM_FE)
+names(recast_BMM_FE_remelt)[3]="mean_cc_BMM_FE"
+recast_TRMM_FE_remelt_sd=melt(recast_TRMM_FE_sd)
+names(recast_TRMM_FE_remelt_sd)[3]="sd_cc_TRMM_FE"
+recast_BMM_FE_remelt_sd=melt(recast_BMM_FE_sd)
+names(recast_BMM_FE_remelt_sd)[3]="sd_cc_BMM_FE"
+recast_FE_list=list(recast_TRMM_FE_remelt,recast_TRMM_FE_remelt_sd,recast_BMM_FE_remelt,recast_BMM_FE_remelt_sd)
+remelt_compiled_FE=Reduce(function(d1, d2) merge(d1,d2,by=c("Var1","Var2")), recast_FE_list)
+names(remelt_compiled_FE)[1:2]=c("taxa","spent_media")
+
+remelt_compiled_FE_TRMM_BMM_4s=remelt_compiled_FE %>% filter(taxa!='Arenibacter71') %>% filter(spent_media!='Arenibacter71')
+
+#combine 120h data with 48h data in TRMM and FE
+# 120h data 
+S4=c("Psychromonas14","Vibrio1","Cobetia10","Neptunomonas4")
+max_matrix_ratio_reorder_2_no_Vib1S_reshaped_4strains=max_matrix_ratio_reorder_2_no_Vib1S_reshaped %>%
+filter(growth %in% S4 & `spent media` %in% S4) %>% select(growth,`spent media`,fraction_overlap,sd) %>%
+  dplyr::rename(taxa= growth,spent_media=`spent media`,fraction_overlap_120h=fraction_overlap,sd_120h=sd) %>% mutate(time='120h growth')
+remelt_compiled_FE_4strains=remelt_compiled_FE %>% filter(taxa %in% S4 & spent_media %in% S4) %>%
+  mutate(fraction_overlap_48h=1-mean_cc_TRMM_FE)%>%
+  select(taxa,spent_media,fraction_overlap_48h,sd_cc_TRMM_FE) %>% 
+  dplyr::rename(sd_48h=sd_cc_TRMM_FE) %>% mutate(time='48h growth')
+remelt_compiled_FE_list_2times=list(max_matrix_ratio_reorder_2_no_Vib1S_reshaped_4strains,remelt_compiled_FE_4strains)
+remelt_compiled_FE_2times=Reduce(function(d1, d2) merge(d1,d2,by=c("taxa","spent_media")), remelt_compiled_FE_list_2times)
+
+early_list_2s=c('Psychromonas14','Vibrio1')
+late_list_2s=c('Cobetia10','Neptunomonas4')
+
+remelt_compiled_FE_2times=remelt_compiled_FE_2times %>% mutate(category = case_when( taxa %in% early_list_2s & spent_media %in% early_list_2s ~ "Early-Early", taxa %in% late_list_2s & spent_media %in% late_list_2s ~ 'Late-Late', TRUE ~ 'Early-Late/Late-Early'))
+
+EL_palette=c("darkorchid", "grey60", "darkgreen")
+
+ASV5palette=ASV5Palette_1[order(match(rownames(ASV5Palette_1),levels(remelt_compiled_FE_TRMM_BMM_4s$taxa))),]
+
+TRMM_BMM_compare_FE=ggplot(remelt_compiled_FE_TRMM_BMM_4s,aes(x=mean_cc_TRMM_FE,y=mean_cc_BMM_FE))+geom_point(size=2,aes(color=taxa))+
+  geom_errorbar(aes(ymax=mean_cc_BMM_FE+sd_cc_BMM_FE,ymin=mean_cc_BMM_FE-sd_cc_BMM_FE,color=taxa),width=0,alpha=0.6)+
+  geom_errorbarh(aes(xmax=mean_cc_TRMM_FE+sd_cc_TRMM_FE,xmin=mean_cc_TRMM_FE-sd_cc_TRMM_FE,color=taxa),height=0,alpha=0.6)+
+ # stat_poly_line(formula = y ~ x + 0,linetype=2,color='black',alpha=0.5,se=F)+
+  geom_smooth(method = "lm",linetype=2,color='black',alpha=0.5,se=F)+
+  scale_color_manual(values=ASV5palette)+
+  stat_poly_eq(formula = y ~ x + 0,
+               aes(label = paste(after_stat(eq.label),
+                                 after_stat(rr.label), sep = "*\", \"*")))+
+  xlab('% growth in spent media (TRMM)')+ylab('% growth in spent media (BMM)')+xlim(c(0,0.4))+ylim(c(0,0.4))+theme_classic(base_size = 15)
+
+
+
+lm_TRMM_BMM_compare_FE=lm(mean_cc_BMM_FE~0+mean_cc_TRMM_FE,data=remelt_compiled_FE_TRMM_BMM_4s)
+
+#png('Figures_final/S13_TRMM_BMM_compare_FE.png',width=2000,height=1200,res=300)
+TRMM_BMM_compare_FE
+#dev.off() 
+
+remelt_compiled_FE_2times_f=remelt_compiled_FE_2times %>% filter(taxa!=spent_media)
+
+lm_TRMM_2times_compare_FE=lm(fraction_overlap_48h~0+fraction_overlap_120h,data=remelt_compiled_FE_2times_f)
+
+compare_FE_2times=ggplot(remelt_compiled_FE_2times_f,aes(x=fraction_overlap_120h,y=fraction_overlap_48h,color=category))+geom_point(size=4,pch=17)+
+  geom_errorbar(aes(ymax=fraction_overlap_48h+sd_48h,ymin=fraction_overlap_48h-sd_48h),width=0,alpha=0.6)+
+  geom_errorbarh(aes(xmax=fraction_overlap_120h-sd_120h,xmin=fraction_overlap_120h+sd_120h),height=0,alpha=0.6)+
+  geom_smooth(method = "lm",linetype=2,color='black',alpha=0.5,se=F)+scale_color_manual(values=EL_palette,guide=guide_legend(ncol=1))+
+  xlab('Overlap (%) 120h')+ylab('Overlap (%) 48h')+xlim(c(0.5,1))+ylim(c(0.5,1))+
+  geom_text(x=0.65, y=0.645,col="#1D0E02",label="y = 0.85 x",size=4.75,fontface='italic')+
+  geom_text(x=0.65, y=0.6,col="#1D0E02",label=expression(italic(R)^2~"= 0.98"),size=4.75)+
+  theme_bw(base_size = 19)+
+  theme(legend.position = "bottom",legend.title = element_blank(),axis.text = element_text(color='black'))
+
+png('Figures_final/F2c_compare_FE_2times_2.png',width=1000,height=1600,res=300)
+compare_FE_2times
+dev.off() 
+
+
+max_matrix_5s_merged_BMM_Man_ratio=max_matrix_5s_merged_BMM_Man %>% group_by(taxa) %>% mutate(mean_cc_ratio=mean_cc/mean_cc[spent.media=='NF'],sd_percentage_ratio=((sd_cc/mean_cc)^2+(sd_cc[spent.media=='NF']/mean_cc[spent.media=='NF'])^2)^0.5)
+max_matrix_5s_merged_BMM_Man_ratio$sd_ratio=max_matrix_5s_merged_BMM_Man_ratio$mean_cc_ratio*max_matrix_5s_merged_BMM_Man_ratio$sd_percentage_ratio
+max_matrix_5s_merged_BMM_Man_ratio_no_NF=max_matrix_5s_merged_BMM_Man_ratio %>% filter(spent.media!='NF')
+
+recast_BMM_Man=acast(max_matrix_5s_merged_BMM_Man_ratio_no_NF,taxa~spent.media,value.var='mean_cc_ratio')
+recast_BMM_Man=recast_BMM_Man[c(4,5,2,3,1),c(4,5,2,3,1)]
+recast_BMM_Man_sd=acast(max_matrix_5s_merged_BMM_Man_ratio_no_NF,taxa~spent.media,value.var='sd_ratio')
+recast_BMM_Man_sd=recast_BMM_Man_sd[c(4,5,2,3,1),c(4,5,2,3,1)]
+spent_overlap_BMM_Man=1-recast_BMM_Man
+spent_overlap_BMM_Man_1=spent_overlap_BMM_Man[1:4,1:4]
+
+#png('Figures_compiled/spent_media/spent_overlap_BMM_Man_4s.png',width=2000,height=2000,res=300)
+#corrplot(as.matrix(spent_overlap_BMM_Man_1),method = 'pie',col.lim = c(0,1),col=c(brewer.pal(11,"BrBG"),rev(brewer.pal(11,"BrBG"))),tl.col = 'black',tl.cex = 1.5,cl.cex = 1.2,cl.align.text="l")
+#dev.off()
+
+max_matrix_5s_merged_TRMM_Man_ratio=max_matrix_5s_merged_TRMM_Man %>% group_by(taxa) %>% mutate(mean_cc_ratio=mean_cc/mean_cc[spent.media=='NF'],sd_percentage_ratio=((sd_cc/mean_cc)^2+(sd_cc[spent.media=='NF']/mean_cc[spent.media=='NF'])^2)^0.5)
+max_matrix_5s_merged_TRMM_Man_ratio$sd_ratio=max_matrix_5s_merged_TRMM_Man_ratio$mean_cc_ratio*max_matrix_5s_merged_TRMM_Man_ratio$sd_percentage_ratio
+max_matrix_5s_merged_TRMM_Man_ratio_no_NF=max_matrix_5s_merged_TRMM_Man_ratio %>% filter(spent.media!='NF')
+
+recast_TRMM_Man=acast(max_matrix_5s_merged_TRMM_Man_ratio_no_NF,taxa~spent.media,value.var='mean_cc_ratio')
+recast_TRMM_Man=recast_TRMM_Man[c(4,5,2,3,1),c(4,5,2,3,1)]
+recast_TRMM_Man_sd=acast(max_matrix_5s_merged_TRMM_Man_ratio_no_NF,taxa~spent.media,value.var='sd_ratio')
+recast_TRMM_Man_sd=recast_TRMM_Man_sd[c(4,5,2,3,1),c(4,5,2,3,1)]
+
+spent_overlap_TRMM_Man=1-recast_TRMM_Man
+spent_overlap_TRMM_Man_1=spent_overlap_TRMM_Man[1:4,1:4]
+
+#png('Figures_final/S8c_spent_overlap_TRMM_Man_4s.png',width=2500,height=2000,res=300)
+corrplot(as.matrix(spent_overlap_TRMM_Man_1),method = 'pie',col.lim = c(0,1),col=c(brewer.pal(11,"BrBG"),rev(brewer.pal(11,"BrBG"))),tl.col = 'black',tl.cex = 2,cl.cex = 1.5,cl.align.text="l")
+#dev.off()
+
+# recast_TRMM_Man_remelt=melt(recast_TRMM_Man)
+# names(recast_TRMM_Man_remelt)[3]="mean_cc_TRMM_Man"
+# recast_BMM_Man_remelt=melt(recast_BMM_Man)
+# names(recast_BMM_Man_remelt)[3]="mean_cc_BMM_Man"
+# recast_TRMM_Man_remelt_sd=melt(recast_TRMM_Man_sd)
+# names(recast_TRMM_Man_remelt_sd)[3]="sd_cc_TRMM_Man"
+# recast_BMM_Man_remelt_sd=melt(recast_BMM_Man_sd)
+# names(recast_BMM_Man_remelt_sd)[3]="sd_cc_BMM_Man"
+# recast_Man_list=list(recast_TRMM_Man_remelt,recast_TRMM_Man_remelt_sd,recast_BMM_Man_remelt,recast_BMM_Man_remelt_sd)
+# remelt_compiled_Man=Reduce(function(d1, d2) merge(d1,d2,by=c("Var1","Var2")), recast_Man_list)
+# names(remelt_compiled_Man)[1:2]=c("taxa","spent_media")
+# 
+# TRMM_BMM_compare_Man=ggplot(remelt_compiled_Man,aes(x=mean_cc_TRMM_Man,y=mean_cc_BMM_Man,color=taxa))+geom_point(size=2)+
+#   geom_errorbar(aes(ymax=mean_cc_BMM_Man+sd_cc_BMM_Man,ymin=mean_cc_BMM_Man-sd_cc_BMM_Man),width=0,alpha=0.6)+
+#   geom_errorbarh(aes(xmax=mean_cc_TRMM_Man+sd_cc_TRMM_Man,xmin=mean_cc_TRMM_Man-sd_cc_TRMM_Man),height=0,alpha=0.6)+
+#   geom_smooth(method = "lm",linetype=2,color='black',alpha=0.5,se=F)+scale_color_manual(values=ASV5palette[c(2,1,3,4,5)])+
+#   xlab('% growth in spent media (TRMM)')+ylab('% growth in spent media (BMM)')+xlim(c(0,0.8))+ylim(c(0,0.8))
+# 
+# lm_TRMM_BMM_compare_Man=lm(mean_cc_BMM_Man~mean_cc_TRMM_Man,data=remelt_compiled_Man)
+# 
+# #png('Figures_compiled/spent_media/TRMM_BMM_compare_Man.png',width=2000,height=1500,res=300)
+# TRMM_BMM_compare_Man
+# #dev.off() 
+# 
+# detach("package:phyloseq", unload=TRUE)
+# detach("package:reshape2", unload=TRUE)
+
+```
+
+##Genomic analysis for functional differences
+```{r}
+#All KO files
+filelist = list.files(path='isolate_seq/KAAS_tables/KO_files_renamed/',pattern = ".ko")
+filelistname=unlist(lapply(filelist,function(x) strsplit(x,".",fixed=T)[[1]][1]))
+datalist = lapply(paste0('isolate_seq/KAAS_tables/KO_files_renamed/',filelist), function(x) read.table(x, fill=T,header=F))
+datalist_clean = lapply(datalist, function(x) as.character(x$V2))
+datalist_clean = lapply(datalist_clean, function(x) x[grep("K",x)])   #This gives all KO assignments for each isolate
+names(datalist_clean)=filelistname
+
+
+```
+
+##transform list into counts
+```{r}
+unique_datalist_clean=unique(unlist(datalist_clean))
+unique_datalist_clean=as.matrix(unique_datalist_clean)
+count_datalist_clean=lapply(datalist_clean,function(x) apply(unique_datalist_clean,1, function(y) sum(y==x)))
+count_datalist_clean_matrix=do.call(rbind.data.frame,count_datalist_clean)
+rownames(count_datalist_clean_matrix)=filelistname
+names(count_datalist_clean_matrix)=unique_datalist_clean
+```
+
+##KEGG modules 
+```{r,eval=F}
+#linking KOs to specific reaction modules
+metalist <- read.table("https://rest.kegg.jp/list/module", quote="", sep="\t")
+metalist$V1=gsub("md:","",metalist$V1)
+rownames(metalist)=metalist$V1
+metalist$V1=NULL
+metalist=as.data.frame(t(metalist))
+
+
+
+ko_module=as.data.frame(as.list(keggLink("ko",names(metalist))),stringsAsFactors=F)
+ko_module[1,]=gsub("ko:","",ko_module[1,])
+count_datalist_clean_matrix_frommodule=count_datalist_clean_matrix[,names(count_datalist_clean_matrix) %in% ko_module[1,]]
+
+module_list=ko_module[ko_module[1,]%in% names(count_datalist_clean_matrix_frommodule)]
+
+module_list=as.data.frame(as.list(module_list),stringsAsFactors = F)
+module_list[2,]=names(module_list)
+module_list=as.data.frame(t(module_list))
+names(module_list)=c('KO','module')
+module_list$module=sapply(strsplit(as.character(module_list$module),'.',fixed=T),`[`,2)
+
+##This section gives counts to all KOs that belong to transporter modules in KEGG
+t_count_datalist_clean_matrix_frommodule=as.data.frame(t(count_datalist_clean_matrix_frommodule))
+t_count_datalist_clean_matrix_frommodule$KO=rownames(t_count_datalist_clean_matrix_frommodule)
+t_count_datalist_clean_matrix_frommodule_1=full_join(t_count_datalist_clean_matrix_frommodule,module_list,by='KO')
+t_count_datalist_clean_matrix_frommodule_1$KO=NULL
+t_count_datalist_clean_matrix_module_agg=aggregate(. ~ module,t_count_datalist_clean_matrix_frommodule_1, sum)
+selected_modules=metalist[1,names(metalist) %in% t_count_datalist_clean_matrix_module_agg$module]
+selected_modules=as.data.frame(t(selected_modules))
+selected_modules[,1]=paste(rownames(selected_modules),selected_modules[,1],sep=':')
+rownames(t_count_datalist_clean_matrix_module_agg)=selected_modules[,1]
+t_count_datalist_clean_matrix_module_agg$module=NULL
+t_count_datalist_clean_matrix_module_agg=
+  t_count_datalist_clean_matrix_module_agg[rowSums(t_count_datalist_clean_matrix_module_agg)>0,]
+
+t_count_datalist_clean_matrix_module_agg_scale=as.data.frame(scale(t_count_datalist_clean_matrix_module_agg,center = F,scale = colSums(t_count_datalist_clean_matrix_module_agg)))
+
+```
+
+#Link KEGG functional distances to measured functional overlaps
+```{r}
+seq_list=c('Psychro9','Psychro14_2','Vibrio1_3','Vibrio2_7','Pseudo5_2','Halo10_3','Oceano4','Altero38','Flavo71_2r')
+t_count_datalist_clean_matrix_module_agg_scale_select=t_count_datalist_clean_matrix_module_agg_scale[,names(t_count_datalist_clean_matrix_module_agg_scale) %in% seq_list]
+t_count_datalist_clean_matrix_module_agg_scale_select=t_count_datalist_clean_matrix_module_agg_scale_select[,order(match(names(t_count_datalist_clean_matrix_module_agg_scale_select),seq_list))]
+
+distfun=function(x)as.dist(1-cor(x),diag = T,upper = T)
+#dist_matrix=distfun(as.matrix(t_count_datalist_clean_matrix_module_agg_scale_select))
+#dist_matrix_1=as.data.frame(as.matrix(dist_matrix))
+#dist_matrix_melt=melt(dist_matrix_1)
+#names(dist_matrix_melt)=c('taxa','functional_distance')
+dist_matrix_module=distfun(as.matrix(t_count_datalist_clean_matrix_module_agg_scale_select))
+dist_matrix_module_1=as.data.frame(as.matrix(dist_matrix_module))
+
+dist_matrix_melt_module=melt(dist_matrix_module_1)
+names(dist_matrix_melt_module)=c('taxa','functional_distance_module')
+
+#spent_overlap_select=spent_overlap[c(2,3,4,5,6,7,8,10),c(2,3,4,5,6,7,8,10)]
+average_spent_overlap_module=matrix(,nrow(spent_overlap),ncol(spent_overlap))
+for (i in 1:nrow(spent_overlap)){
+  for (j in 1:ncol(spent_overlap)){
+    average_spent_overlap_module[i,j]=(spent_overlap[j,i]+spent_overlap[i,j])/2
+  }
+}
+
+average_spent_overlap_module=as.data.frame(average_spent_overlap_module)
+names(average_spent_overlap_module)=names(spent_overlap)
+average_spent_overlap_module$taxa=rownames(spent_overlap)
+average_spent_overlap_module_melt=melt(average_spent_overlap_module)
+names(average_spent_overlap_module_melt)=c("taxa1","taxa2","functional_overlap")
+dist_matrix_average_spent_overlap_module=cbind(dist_matrix_melt_module,average_spent_overlap_module_melt)
+dist_matrix_average_spent_overlap_module=dist_matrix_average_spent_overlap_module[,-1]
+early_list=c('Pseudoalteromonas5','Psychromonas14','Psychromonas9','Vibrio1','Vibrio2')
+late_list=c('Alteromonas38','Arenibacter71','Cobetia10','Neptunomonas4','Celeribacter26')
+select_list=c('Psychromonas14','Vibrio1','Cobetia10','Neptunomonas4')
+
+dist_matrix_average_spent_overlap_module=dist_matrix_average_spent_overlap_module %>% mutate(category = case_when( taxa1 %in% early_list & taxa2 %in% early_list ~ "Early-Early", taxa1 %in% late_list & taxa2 %in% late_list ~ 'Late-Late', taxa1 %in% early_list & taxa2 %in% late_list ~ 'Early-Late',taxa1 %in% late_list & taxa2 %in% early_list ~ 'Early-Late'))%>% mutate(select=case_when(taxa1 %in% select_list & taxa2 %in% select_list ~ "Selected", TRUE ~ 'Not Selected'))
+
+#both are called EL because this matrix is already averaged
+
+dist_matrix_average_spent_overlap_module_f=dist_matrix_average_spent_overlap_module %>% filter(taxa1!=taxa2)
+ 
+
+# png('Figures_compiled/heatmaps/niche_overlap_dist_module_combined_by_category_f.png',width = 1800,height=1200,res=300)
+# ggplot(dist_matrix_average_spent_overlap_module_f,aes(x=functional_overlap,y=functional_distance_module,color=category))+geom_point(size=2)+theme_bw()+xlab('Functional Overlap (Spent Media exp.)')+ylab('Functional Distance by KEGG modules')
+# dev.off()
+
+EL_palette=c("darkorchid", "grey60", "darkgreen")
+
+png('Figures_final/F2b_niche_overlap_dist_module_facet_by_category_f_2_9strains.png',width =2400,height=1800,res=300)
+ggscatter(dist_matrix_average_spent_overlap_module_f,x="functional_overlap",y="functional_distance_module",color = "category",shape='select',size = 'select', alpha = 0.6, add = "reg.line",
+          palette = EL_palette,
+          conf.int = TRUE)+facet_wrap(~category)+
+  stat_regline_equation(label.y = 0.05, aes(label = ..rr.label..),size=5)+
+  stat_regline_equation(label.y = 0.07, aes(label = ..eq.label..),size=5) +
+  xlab('Functional overlap (spent media experiment)')+ylab('Functional distance\n by KEGG metabolic modules')+
+  theme_bw(base_size = 20)+
+  theme(legend.position="bottom",legend.box="vertical",axis.text=element_text(color = 'black'))
+dev.off()
+
+
+#png('Figures_compiled/heatmaps/niche_overlap_dist_pathway_faceted.png',width = 2500,height=1800,res=300)
+#ggplot(dist_matrix_average_spent_overlap,aes(x=functional_overlap,y=functional_distance_pathways,color=taxa))+geom_point(size=2)+facet_wrap(~taxa,nrow=4)+theme_bw()+scale_color_manual(values=ASV11palette_for_dist)+xlab('Functional Overlap (Spent Media exp.)')+ylab('Functional Distance by KEGG metabolic pathways')
+#dev.off()
+
+```
+
+
+

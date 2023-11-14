@@ -1,0 +1,831 @@
+---
+title: "seaweed succession project -- growth curves"
+output: html_notebook
+---
+
+#set folder
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/Users/Xiaoqian/Desktop/seaweed/FE_enrich")
+```
+
+
+#libraries
+```{r}
+library(reshape)
+library(dplyr)
+library(growthrates)
+library(ComplexHeatmap)
+library(circlize)
+library(qdap)
+library(ggplot2)
+library(cowplot)
+
+```
+
+#Short to long names
+```{r}
+short_names=c("Psychro9","Psychro14","Vibrio1","Vibrio2","Pseudo5","Halo10","Rhodo26","Altero38","Flavo71","Oceano4")
+long_names=c("Psychromonas9","Psychromonas14","Vibrio1","Vibrio2","Pseudoalteromonas5","Cobetia10","Celeribacter26","Alteromonas38","Arenibacter71","Neptunomonas4")
+substrate_old=c('FE','Man')
+substrate_new=c('FL','Mannitol')
+
+
+short_to_long=function(x){
+  y=mgsub(short_names,long_names,x)
+  return(y)
+}
+substrate_swap=function(x){
+  y=mgsub(substrate_old,substrate_new,x)
+  return(y)
+}
+
+
+```
+
+#read in ASV5Palette for genus
+```{r}
+
+ASV5Palette_1=read.csv('color_palettes/ASV5Palette_genus.csv',row.names = 1)
+ASV5Palette=ASV5Palette_1$ASV5Palette
+ASV5list_new=rownames(ASV5Palette_1)
+
+#read in ASV11Palette for genus
+ASV11Palette_1=read.csv('color_palettes/ASV11Palette_genus.csv',row.names = 1)
+ASV11Palette=ASV11Palette_1$ASV11palette
+ASV11list_new=rownames(ASV11Palette_1)
+ASV11list_early=ASV11list_new[6:10]
+ASV11list_late=ASV11list_new[1:5]
+
+
+```
+
+
+
+
+#Individual Growth curves
+```{r}
+
+allgrowth7=read.csv('crossfeeding/FACS/021719_7strains_growth/021719_7strains_growth_summary_TRMM_only_R_updated.csv',header=F)
+rownames(allgrowth7)=allgrowth7$V1
+allgrowth7$V1=NULL
+allgrowth7=as.data.frame(t(allgrowth7))
+
+allgrowth4=read.csv('crossfeeding/FACS/030419_4strains_growth_redo/FACS_summary_cell_count_4strains_redo_summary_R_updated.csv',header=F)
+rownames(allgrowth4)=allgrowth4$V1
+allgrowth4$V1=NULL
+allgrowth4=as.data.frame(t(allgrowth4))
+
+
+allgrowth_F=read.csv('crossfeeding/FACS/030419_4strains_growth_redo/FACS_summary_cell_count_Flavo_redo_summary_R_updated.csv',header=F)
+rownames(allgrowth_F)=allgrowth_F$V1
+allgrowth_F$V1=NULL
+allgrowth_F=as.data.frame(t(allgrowth_F))
+
+allgrowth_F_melt=reshape::melt(allgrowth_F,id=c('sample','replicate'))
+names(allgrowth_F_melt)=c('sample','replicate','time','cell_count')
+allgrowth_F_melt=allgrowth_F_melt[,c("time",'replicate',"sample","cell_count")]
+allgrowth_F_melt$media=unlist(lapply(strsplit(as.character(allgrowth_F_melt$sample),"-"),function(x) x[1]))
+allgrowth_F_melt$substrate=unlist(lapply(strsplit(as.character(allgrowth_F_melt$sample),"-"),function(x) x[2]))
+allgrowth_F_melt$taxa=unlist(lapply(strsplit(as.character(allgrowth_F_melt$sample),"-"),function(x) x[3]))
+allgrowth_F_melt=na.omit(allgrowth_F_melt)
+allgrowth_F_melt=allgrowth_F_melt %>% filter(cell_count!="")
+
+allgrowth7_melt=reshape::melt(allgrowth7,id=c('time','replicate'))
+names(allgrowth7_melt)=c('time','replicate','sample','cell_count')
+allgrowth7_melt$media=unlist(lapply(strsplit(as.character(allgrowth7_melt$sample),"-"),function(x) x[1]))
+allgrowth7_melt$substrate=unlist(lapply(strsplit(as.character(allgrowth7_melt$sample),"-"),function(x) x[2]))
+allgrowth7_melt$taxa=unlist(lapply(strsplit(as.character(allgrowth7_melt$sample),"-"),function(x) x[3]))
+allgrowth7_melt=na.omit(allgrowth7_melt)
+
+allgrowth4_melt=reshape::melt(allgrowth4,id=c('time','replicate'))
+names(allgrowth4_melt)=c('time','replicate','sample','cell_count')
+allgrowth4_melt$media=unlist(lapply(strsplit(as.character(allgrowth4_melt$sample),"-"),function(x) x[1]))
+allgrowth4_melt$substrate=unlist(lapply(strsplit(as.character(allgrowth4_melt$sample),"-"),function(x) x[2]))
+allgrowth4_melt$taxa=unlist(lapply(strsplit(as.character(allgrowth4_melt$sample),"-"),function(x) x[3]))
+allgrowth4_melt=na.omit(allgrowth4_melt)
+
+allgrowth11_melt=rbind(allgrowth7_melt,allgrowth4_melt,allgrowth_F_melt)
+allgrowth11_melt$time=as.numeric(allgrowth11_melt$time)
+#allgrowth11_melt$substrate=as.factor(allgrowth11_melt$substrate)
+allgrowth11_melt$cell_count=as.numeric(allgrowth11_melt$cell_count)
+
+allgrowth11_melt$taxa=short_to_long(allgrowth11_melt$taxa)
+allgrowth11_melt$substrate=substrate_swap(allgrowth11_melt$substrate)
+
+allgrowth11_melt_average=allgrowth11_melt %>% group_by(time,substrate,taxa) %>% summarise(mean_cc=mean(cell_count),sd_cc=sd(cell_count)) %>% filter(taxa!='Vib1.S') %>% filter(time<41)
+
+```
+#Growth Curves for all strains
+```{r}
+p_growth_curves<- ggplot(allgrowth11_melt_average, aes(x=time, y=mean_cc)) + 
+  geom_line(aes(x=time, y=mean_cc,color=substrate,group=substrate),size=1)+
+  scale_color_manual(values=c('#594c0c','darkgrey'),guide=guide_legend(ncol=1),name='substrates')+
+  geom_errorbar(aes(ymin=mean_cc-sd_cc, ymax=mean_cc+sd_cc,color=substrate),width=0,size=1)+
+  geom_point(size=1.5,aes(x=time, y=mean_cc,fill=taxa,color=substrate),shape=21)+
+  scale_fill_manual(values=ASV11Palette)+
+  facet_wrap(vars(taxa),nrow=2,scales = "free")+theme_bw()+ylab('Cells/mL')+xlab('time/h')+
+  theme(legend.position = "bottom",axis.text=element_text(size=16),legend.title = element_text(size=16),legend.text = element_text(size=14),axis.title=element_text(size=16),strip.text = element_text(size = 14))+
+  guides(fill=guide_legend(nrow=2,byrow=TRUE))#+scale_x_continuous(trans='log2')#+scale_y_log10()#
+#png('Figures_final/S7a_all_growth_curves_compiled.png',width = 4000,height = 1600,res=300)
+p_growth_curves
+#dev.off()
+```
+
+#select 5 or 4 strains and plot their growth curves
+```{r}
+ASV5_list_short=c('Vibrio1','Psychromonas14','Cobetia10','Neptunomonas4') 
+ASV5_list_early=c('Vibrio1','Psychromonas14')
+ASV5_list_late=c('Cobetia10','Neptunomonas4') 
+
+allgrowth11_melt_5s=allgrowth11_melt %>% filter(taxa %in% ASV5_list_short)
+allgrowth11_melt_5s=allgrowth11_melt_5s %>% mutate(category=case_when(taxa %in% ASV5_list_early ~ 'Early', TRUE ~ 'Late'))
+allgrowth_melt_average_5s=allgrowth11_melt_average %>% filter(taxa %in% ASV5_list_short) 
+allgrowth_melt_average_5s$taxa=factor(allgrowth_melt_average_5s$taxa,levels=ASV5_list_short)
+allgrowth_melt_average_5s=allgrowth_melt_average_5s %>% mutate(category=case_when(taxa %in% ASV5_list_early ~ 'Early', TRUE ~ 'Late'))
+
+allgrowth11_melt_2e=allgrowth11_melt %>% filter(taxa %in% ASV5_list_early)
+allgrowth_melt_average_2e=allgrowth11_melt_average %>% filter(taxa %in% ASV5_list_early) 
+allgrowth_melt_average_2e$taxa=factor(allgrowth_melt_average_2e$taxa,levels=ASV5_list_early)
+
+allgrowth11_melt_2l=allgrowth11_melt %>% filter(taxa %in% ASV5_list_late)
+allgrowth_melt_average_2l=allgrowth11_melt_average %>% filter(taxa %in% ASV5_list_late) 
+allgrowth_melt_average_2l$taxa=factor(allgrowth_melt_average_2l$taxa,levels=ASV5_list_late)
+
+ASV5palette=ASV5Palette_1[order(match(rownames(ASV5Palette_1),levels(allgrowth_melt_average_5s$taxa))),]
+
+
+
+p_growth_curves_5s<- ggplot(allgrowth_melt_average_5s, aes(x=time, y=mean_cc)) + 
+  geom_line(aes(x=time, y=mean_cc,color=substrate,group=substrate),size=1)+
+  scale_color_manual(values=c('#594c0c','darkgrey'),name='substrates')+
+  geom_errorbar(aes(ymin=mean_cc-sd_cc, ymax=mean_cc+sd_cc,color=substrate),width=0,size=1)+
+  geom_point(size=2,aes(x=time, y=mean_cc,fill=taxa,color=substrate),shape=21)+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(~taxa, nrow=2)+ylab('Cells/mL')+xlab('Time (h)')+
+  theme_bw(base_size = 22)+
+  theme(legend.position = "bottom",axis.text = element_text(color="black"))+
+  guides(fill=guide_legend(nrow=2,byrow=TRUE),color=guide_legend(nrow=2,byrow=TRUE))
+
+png('Figures_final/F3a_4strains_growth_nolog.png',height=1800,width=3600,res=300)
+p_growth_curves_5s
+dev.off() 
+
+p_growth_curves_5s_log<- ggplot(allgrowth_melt_average_5s, aes(x=time, y=mean_cc)) + 
+  geom_line(aes(x=time, y=mean_cc,color=substrate,group=substrate),size=1)+
+  scale_color_manual(values=c('#594c0c','darkgrey'))+
+  geom_errorbar(aes(ymin=mean_cc-sd_cc, ymax=mean_cc+sd_cc,color=substrate),width=0,size=1)+
+  geom_point(size=2,aes(x=time, y=mean_cc,fill=taxa,color=substrate),shape=21)+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(vars(taxa),nrow=1)+ylab('Cells/mL')+
+  scale_y_log10()+
+  theme_bw(base_size = 22)+
+  theme(legend.position = "top")+
+  guides(fill=guide_legend(nrow=2,byrow=TRUE))
+
+# p_growth_curves_4s_grid<- ggplot(allgrowth_melt_average_5s, aes(x=time, y=mean_cc)) + 
+#   geom_line(aes(x=time, y=mean_cc,color=substrate,group=taxa))+
+#   scale_color_manual(values=c('#594c0c','darkgrey'))+
+#   geom_errorbar(aes(ymin=mean_cc-sd_cc, ymax=mean_cc+sd_cc,color=substrate),width=0,size=1)+
+#   geom_point(size=3,aes(x=time, y=mean_cc,fill=taxa,color=substrate),shape=21)+
+#   scale_fill_manual(values=ASV5palette[1:4])+
+#   facet_grid(rows=vars(category),cols = vars(substrate),switch = 'y')+
+#   theme_bw()+ylab('Cells/mL')+xlab('time/h')+
+#   theme(legend.position = "top",axis.text=element_text(size=16),legend.text = element_text(size=16),axis.title=element_text(size=16),legend.title = element_text(size=16),strip.text = element_text(size=20),)+
+#   guides(fill=guide_legend(nrow=2,byrow=FALSE))
+
+#p_growth_curves_4s_grid2<- ggplot(allgrowth_melt_average_5s, aes(x=time, y=mean_cc)) +
+#  geom_line(aes(x=time, y=mean_cc,color=substrate,group=interaction(taxa,substrate)))+
+#  scale_color_manual(values=c('#594c0c','darkgrey'))+
+#  geom_errorbar(aes(ymin=mean_cc-sd_cc, ymax=mean_cc+sd_cc,color=substrate),width=0,size=1)+
+#  geom_point(size=3,aes(x=time, y=mean_cc,fill=taxa,color=substrate),shape=21)+
+#  scale_fill_manual(values=ASV5palette[1:4])+
+#  facet_grid(rows=vars(category),switch = 'y')+
+#  theme_bw()+ylab('Cells/mL')+xlab('time/h')+
+#  theme(legend.position = "top",axis.text=element_text(size=16),legend.text = #element_text(size=16),axis.title=element_text(size=16),legend.title = #element_text(size=16),strip.text = element_text(size=20),)+
+#  guides(fill=guide_legend(nrow=2,byrow=FALSE))
+
+
+# png('Figures_compiled/growth_curves/growth_curves_4s_grid.png',width =3000,height=2000,res=300)
+# p_growth_curves_4s_grid
+# dev.off()
+# 
+# png('Figures_compiled/growth_curves/growth_curves_4s_grid2.png',width =3000,height=2000,res=300)
+# p_growth_curves_4s_grid2
+# dev.off()
+# 
+
+
+
+```
+
+
+```{r}
+allgrowth_melt_5s_no_Vibrio=allgrowth11_melt %>% filter(taxa %in% ASV5_list_short) %>% filter(!(taxa=='Arenibacter71' & time==16) ) %>% filter(taxa!='Vibrio1')
+allgrowth_melt_5s_e=allgrowth11_melt %>% filter(taxa %in% ASV5_list_short) %>% filter(time<=12)
+
+allgrowth_splitted_5s_e <- multisplit(allgrowth_melt_5s_e, c("taxa","replicate","substrate"))
+coef_5s_e=list()
+names_coef_5s_e=list()
+
+png('Figures_compiled/growth_curves/five_strains_linear_growth_fits_log_e.png',width=2500,height=1200,res=100)
+ par(mfrow=c(6,4))
+ for (i in 1:length(allgrowth_splitted_5s_e)){
+   dat=allgrowth_splitted_5s_e[[i]]
+   fit <- fit_easylinear(dat$time, dat$cell_count,h=5,q=1)
+   if (rsquared(fit)>0.9){
+   coef_5s_e[[i]]=coef(fit)
+   coef_5s_e[[i]]=c(coef_5s_e[[i]],replicate=unique(dat$replicate))}
+   else{
+     fit <- fit_easylinear(dat$time, dat$cell_count,h=4,q=1)
+ #    if (rsquared(fit)>0.7){
+      coef_5s_e[[i]]=coef(fit)
+      coef_5s_e[[i]]=c(coef_5s_e[[i]],replicate=unique(dat$replicate))
+  #   }else{
+ #     coef_5s_e[[i]]=c(0,0,0,0)
+ #    }
+   }
+   names_coef_5s_e[[i]]=allgrowth_splitted_5s_e[[i]]$sample[1]
+   plot(fit,main=allgrowth_splitted_5s_e[[i]]$sample[1],log='y')
+ }
+ dev.off()
+
+coef_5s=coef_5s_e
+names_coef_5s=names_coef_5s_e
+
+# allgrowth_melt_5s_Vibrio=allgrowth11_melt %>% filter(taxa=='Vibrio1') 
+# allgrowth_melt_5s_Psychro=allgrowth11_melt %>% filter(taxa=='Psychromonas14') 
+# allgrowth_melt_5s_Halo=allgrowth11_melt %>% filter(taxa=='Cobetia10') 
+# allgrowth_melt_5s_Oceano=allgrowth11_melt %>% filter(taxa=='Neptunomonas4') 
+# 
+
+# 
+# allgrowth_splitted_5s_no_Vibrio <- multisplit(allgrowth_melt_5s_no_Vibrio, c("taxa","replicate","substrate"))
+# coef_5s_no_Vib=list()
+# names_coef_5s_no_Vib=list()
+# 
+# png('Figures_compiled/growth_curves/five_strains_linear_growth_fits_log.png',width=2500,height=1200,res=100)
+# par(mfrow=c(6,5))
+# for (i in 1:length(allgrowth_splitted_5s_no_Vibrio)){
+#   dat=allgrowth_splitted_5s_no_Vibrio[[i]]
+#   fit <- fit_easylinear(dat$time, dat$cell_count,h=5,q=1)
+#   if (rsquared(fit)>0.7){
+#   coef_5s_no_Vib[[i]]=coef(fit)
+#   coef_5s_no_Vib[[i]]=c(coef_5s_no_Vib[[i]],replicate=unique(dat$replicate))}
+#   else{
+#     coef_5s_no_Vib[[i]]=c(0,0,0,0)
+#   }
+#   names_coef_5s_no_Vib[[i]]=allgrowth_splitted_5s_no_Vibrio[[i]]$sample[1]
+#   plot(fit,main=allgrowth_splitted_5s_no_Vibrio[[i]]$sample[1],log='y')
+# }
+# dev.off()
+# 
+# 
+# 
+# 
+# 
+# allgrowth_splitted_5s_Vibrio <- multisplit(allgrowth_melt_5s_Vibrio, c("taxa","replicate","substrate"))
+# coef_5s_Vib=list()
+# names_coef_5s_Vib=list()
+# png('Figures_compiled/growth_curves/five_strains_linear_growth_fits_log_Vibrio.png',width=600,height=1200,res=100)
+# par(mfrow=c(6,1))
+# for (i in 1:length(allgrowth_splitted_5s_Vibrio)){
+#   dat=allgrowth_splitted_5s_Vibrio[[i]]
+#   fit <- fit_easylinear(dat$time, dat$cell_count,h=5,q=1)
+#   if (rsquared(fit)>0.85){
+#   coef_5s_Vib[[i]]=coef(fit)
+#   coef_5s_Vib[[i]]=c(coef_5s_Vib[[i]],replicate=unique(dat$replicate))}
+#   else{
+#     coef_5s_Vib[[i]]=c(0,0,0,0)
+#   }
+#   names_coef_5s_Vib[[i]]=allgrowth_splitted_5s_Vibrio[[i]]$sample[1]
+#   plot(fit,main=allgrowth_splitted_5s_Vibrio[[i]]$sample[1],log='y')
+# }
+# dev.off()
+# 
+# allgrowth_splitted_5s_Psychro <- multisplit(allgrowth_melt_5s_Psychro, c("taxa","replicate","substrate"))
+# coef_5s_Psychro=list()
+# names_coef_5s_Psychro=list()
+# png('Figures_compiled/growth_curves/five_strains_linear_growth_fits_log_Psychro.png',width=600,height=1200,res=100)
+# par(mfrow=c(6,1))
+# for (i in 1:length(allgrowth_splitted_5s_Psychro)){
+#   dat=allgrowth_splitted_5s_Psychro[[i]]
+#   fit <- fit_easylinear(dat$time, dat$cell_count,h=4,q=1)
+#   if (rsquared(fit)>0.85){
+#   coef_5s_Psychro[[i]]=coef(fit)
+#   coef_5s_Psychro[[i]]=c(coef_5s_Psychro[[i]],replicate=unique(dat$replicate))}
+#   else{
+#     coef_5s_Psychro[[i]]=c(0,0,0,0)
+#   }
+#   names_coef_5s_Psychro[[i]]=allgrowth_splitted_5s_Psychro[[i]]$sample[1]
+#   plot(fit,main=allgrowth_splitted_5s_Psychro[[i]]$sample[1],log='y')
+# }
+# dev.off()
+# 
+# allgrowth_splitted_5s_Halo <- multisplit(allgrowth_melt_5s_Halo, c("taxa","replicate","substrate"))
+# coef_5s_Halo=list()
+# names_coef_5s_Halo=list()
+# png('Figures_compiled/growth_curves/five_strains_linear_growth_fits_log_Halo.png',width=600,height=1200,res=100)
+# par(mfrow=c(6,1))
+# for (i in 1:length(allgrowth_splitted_5s_Halo)){
+#   dat=allgrowth_splitted_5s_Halo[[i]]
+#   fit <- fit_easylinear(dat$time, dat$cell_count,h=5,q=1)
+#   if (rsquared(fit)>0.8){
+#   coef_5s_Halo[[i]]=coef(fit)
+#   coef_5s_Halo[[i]]=c(coef_5s_Halo[[i]],replicate=unique(dat$replicate))}
+#   else{
+#     coef_5s_Halo[[i]]=c(0,0,0,0)
+#   }
+#   names_coef_5s_Halo[[i]]=allgrowth_splitted_5s_Halo[[i]]$sample[1]
+#   plot(fit,main=allgrowth_splitted_5s_Halo[[i]]$sample[1],log='y')
+# }
+# dev.off()
+
+#coef_5s=append(coef_5s_no_Vib,coef_5s_Vib)
+#names_coef_5s=append(names_coef_5s_no_Vib,names_coef_5s_Vib)
+
+```
+
+##Growth rate & max carrying capacity
+
+```{r}
+growthrate_coef_matrix_5s=do.call(rbind.data.frame,coef_5s)
+rownames_growthrate_coef_matrix_5s=unlist(names_coef_5s)
+growthrate_coef_matrix_5s_1=cbind(growthrate_coef_matrix_5s,rownames_growthrate_coef_matrix_5s)
+names(growthrate_coef_matrix_5s_1)=c('y0','y0_lm','mumax','lag','replicate','sample')
+growthrate_coef_matrix_5s_1=growthrate_coef_matrix_5s_1[growthrate_coef_matrix_5s_1$mumax!=0,]
+
+growthrate_coef_matrix_5s_1$sample=as.character(growthrate_coef_matrix_5s_1$sample)
+growthrate_coef_matrix_5s_1$substrate=sapply(strsplit(growthrate_coef_matrix_5s_1$sample,"-"),"[[",2)
+growthrate_coef_matrix_5s_1$taxa=sapply(strsplit(growthrate_coef_matrix_5s_1$sample,"-"),"[[",3)
+growthrate_coef_matrix_5s_1$substrate=substrate_swap(growthrate_coef_matrix_5s_1$substrate)
+growthrate_coef_matrix_5s_1$taxa=short_to_long(growthrate_coef_matrix_5s_1$taxa)
+
+allgrowth_melt_5s=allgrowth11_melt %>% filter(taxa %in% ASV5_list_short) %>% filter(!(taxa=='Arenibacter71' & time==16) )
+allgrowth_melt_5s_max=allgrowth_melt_5s %>% group_by(.dots=c("taxa","substrate","replicate")) %>%  summarise(max_cc=max(cell_count))
+
+growthrate_coef_max_5s=growthrate_coef_matrix_5s_1 %>% right_join(allgrowth_melt_5s_max, by=c("replicate","substrate","taxa"))
+
+growthrate_coef_max_5s$taxa=factor(growthrate_coef_max_5s$taxa,levels=ASV5_list_short)
+growthrate_coef_max_5s= growthrate_coef_max_5s %>% mutate(category=case_when(taxa %in% ASV5_list_early ~ 'Early', TRUE ~'Late') )
+growthrate_coef_max_5s$mumax=as.numeric(as.character(growthrate_coef_max_5s$mumax))
+
+growthrate_coef_max_5s_list=split(growthrate_coef_max_5s,f=growthrate_coef_max_5s$taxa)
+growthrate_ttest=list()
+for (i in 1:4){
+  growthrate_ttest[[i]]=t.test(growthrate_coef_max_5s_list[[i]]%>% filter(substrate=='FL')%>% select(mumax)%>%log(),growthrate_coef_max_5s_list[[i]]%>% filter(substrate=='Mannitol')%>% select(mumax)%>% log())
+}
+
+
+growthrate_coef_max_5s_agg=growthrate_coef_max_5s %>% group_by(taxa,substrate,category) %>% summarise(sd_mumax=sd(mumax),sd_max_cc=sd(max_cc),mumax=mean(mumax,na.rm = T),max_cc=mean(max_cc,na.rm = T))
+
+# rate_maxgrowth_summary=ggplot(growthrate_coef_max_5s, aes(x=mumax, y=max_cc,color=taxa)) + geom_point(alpha=0.4,size=2)+
+#   geom_point(data=growthrate_coef_max_5s_agg,aes(x=mumax, y=max_cc,color=taxa),size=8,shape=18)+
+#   facet_grid(rows=vars(category),cols = vars(substrate))+scale_fill_manual(values=ASV5palette)+scale_color_manual(values=ASV5palette)+
+#   scale_x_continuous(breaks=seq(0.4,0.7,0.1))+
+#   theme_bw()+xlab('Max. per capita growth rate')+ylab('Max. cell count')+
+#   theme(legend.position = "top",axis.text=element_text(size=16),legend.text = element_text(size=16),axis.title=element_text(size=16),legend.title = element_text(size=16),strip.text = element_text(size=20))+
+#   guides(fill=guide_legend(nrow=2,byrow=FALSE))
+# 
+# 
+# png('Figures_compiled/growth_curves/rate_maxgrowth_summary_4s_grid.png',width =1200,height=2400,res=300)
+# rate_maxgrowth_summary
+# dev.off()
+  
+
+
+
+
+
+```
+
+##growth rate and max cell count (fold) increase in FE and mannitol
+
+```{r}
+growthrate_coef_max_5s_diff=growthrate_coef_max_5s %>% group_by(taxa,replicate,category) %>% 
+  mutate(ratio_mumax=mumax[1]/mumax[2],ratio_max_cc=max_cc[1]/max_cc[2],diff_max_cc=max_cc[1]-max_cc[2])
+
+growthrate_coef_max_5s_diff_agg=growthrate_coef_max_5s_diff %>% group_by(taxa,category) %>%
+  summarise(mean_ratio_mumax=mean(ratio_mumax),mean_ratio_max_cc=mean(ratio_max_cc),mean_diff_max_cc=mean(diff_max_cc),
+            sd_ratio_mumax=sd(ratio_mumax),sd_ratio_max_cc=sd(ratio_max_cc),sd_diff_max_cc=sd(diff_max_cc))
+
+p_5s_growth_ratio=ggplot(growthrate_coef_max_5s_diff_agg)+
+  geom_bar(aes(fill=taxa, y=mean_ratio_mumax,x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = mean_ratio_mumax + sd_ratio_mumax, ymin = mean_ratio_mumax-sd_ratio_mumax,x=taxa,color=taxa),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=ASV5palette)+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(~category,ncol=2,scales = "free_x")+
+  geom_hline(aes(yintercept=1), color="black", linetype="dashed")+
+  ylab('Ratio max.growth rate\n(FL to Mannitol)')+xlab("")+theme_bw()+
+  theme(legend.position = "none",axis.text.x=element_text(size=16,vjust=1,hjust = 1,angle = 30,color='black'),legend.text = element_text(size=16),axis.title=element_text(size=16),axis.text.y=element_text(size=16,color='black'),strip.text = element_text(size=16))
+
+p_5s_max_cc_ratio=ggplot(growthrate_coef_max_5s_diff_agg)+
+  geom_bar(aes(fill=taxa, y=mean_ratio_max_cc,x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = mean_ratio_max_cc + sd_ratio_max_cc, ymin = mean_ratio_max_cc-sd_ratio_max_cc,x=taxa,color=taxa),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=ASV5palette)+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(~category,ncol=2,scales = "free_x")+
+  geom_hline(aes(yintercept=1), color="black", linetype="dashed")+
+  ylab('Ratio max. cell count\n(FL to Mannitol)')+xlab("")+theme_bw()+
+  theme(legend.position = "none",axis.text.x=element_text(size=16,vjust=1,hjust = 1,angle = 30,color='black'),legend.text = element_text(size=16),axis.title=element_text(size=16),axis.text.y=element_text(size=16,color='black'),strip.text = element_text(size=16))
+
+png('Figures_final/F3b_FE_mannito_ratio_maxcc.png',width =1000,height=1200,res=300)
+p_5s_max_cc_ratio
+dev.off()
+
+png('Figures_final/F3c_FE_mannito_ratio_growth_rate.png',width =1000,height=1600,res=300)
+p_5s_growth_ratio
+dev.off()
+
+png('Figures_final/F3bc_FE_mannito_ratio_maxcc_growth.png',width =1600,height=2000,res=300)
+plot_grid(p_5s_max_cc_ratio+theme(axis.title.x=element_blank(),axis.ticks.x = element_blank(), axis.text.x=element_blank(),plot.margin = margin(b = -0.5, t = 0.5)),p_5s_growth_ratio,align = 'v',nrow=2,rel_heights = c(1, 1.6))
+dev.off()
+
+
+
+```
+#Growth rate ratio throughout the curve
+
+```{r}
+melted_growth_curves=allgrowth11_melt_5s[,1:(ncol(allgrowth11_melt_5s)-1)]
+org_data <- split(melted_growth_curves, f = melted_growth_curves$taxa)
+time_points <- seq(1,16)
+
+## making reference time points
+org_times <- list()
+for(i in seq_along(org_data)) {
+    meas_times <- unique(org_data[[i]]$time)
+    temp <- data.frame(time = meas_times, index = 1:length(meas_times))
+    colnames(temp)[2] <- paste(colnames(temp)[2], org_data[[i]]$taxa[1], sep = '_')
+    org_times[[i]] <- temp
+}
+time_slot_table <- Reduce(org_times, 
+                          f = function(dtf1,dtf2) 
+                              merge(dtf1,dtf2,
+                                    by="time", 
+                                    all = TRUE)
+                          )
+
+colnames(time_slot_table) <- sub("index_", "", colnames(time_slot_table))
+
+## gathering cell count data for all organisms
+cell_count_ratios <- list()
+for(i in seq_along(org_data)) {
+    
+    temp <- org_data[[i]] %>%
+        group_by(time, substrate) %>%
+        summarise(mean = mean(cell_count), n = n())
+    mean_cell_count_ratio <- lapply(split(temp, f = temp$time), function(x) {
+        top_col <- x$substrate == "FL"    
+        x$mean[top_col]/x$mean[-top_col]
+    })
+    
+    temp <- data.frame(unlist(mean_cell_count_ratio))
+    colnames(temp) <- org_data[[i]]$taxa[1]
+    
+    cell_count_ratios[[i]] <- temp
+    
+}
+
+## enter data for each organism at the specified time point
+for(i in seq_along(cell_count_ratios)) {
+    time_col <- i+1
+    non_na_rows <- !is.na(time_slot_table[,time_col])
+    time_slot_table[non_na_rows,time_col] <- cell_count_ratios[[i]]
+}
+
+
+## filtering to only check four key organisms
+check_four <- time_slot_table[,-c(1)]
+rownames(check_four) <- time_slot_table$time
+check_four <- check_four[!apply(check_four, 1, function(row) any(is.na(row))),]
+
+## color range
+col_fun = colorRamp2(c(floor(min(check_four, na.rm = T)), 
+                       round(median(unlist(check_four), na.rm = T)), 
+                       floor( max(check_four, na.rm = T))), 
+                     c("cadetblue3", "white", "red"))
+
+hr <- Heatmap(check_four,
+        cluster_rows = F, 
+        cluster_columns = T, 
+        col = col_fun,
+        column_names_rot = 30,
+        column_names_gp = gpar(fontsize = 13,col='black'),
+        heatmap_legend_param = list(
+            title = "Growth\nFold Change\n(FL/Mannitol)",
+            legend_height = unit(4, "cm")
+        ), row_title = "Time points (h)"
+        )
+
+png('Figures_final/F3d_FE_mannito_ratio_growth_curve.png',width =1000,height=1400,res=300)
+hr
+dev.off()
+
+
+```
+
+
+
+
+
+
+#Compare growth rates
+```{r}
+
+growthrate_coef_matrix_5s=do.call(rbind.data.frame,coef_5s)
+rownames_growthrate_coef_matrix_5s=unlist(names_coef_5s)
+growthrate_coef_matrix_5s_1=cbind(growthrate_coef_matrix_5s,rownames_growthrate_coef_matrix_5s)
+names(growthrate_coef_matrix_5s_1)=c('y0','y0_lm','mumax','lag','rep','sample')
+growthrate_coef_matrix_5s_1[,1:4]=apply(growthrate_coef_matrix_5s_1[,1:4],2,as.numeric)
+growthrate_coef_matrix_5s_1=growthrate_coef_matrix_5s_1[rowSums(growthrate_coef_matrix_5s_1[,1:4])!=0,]
+
+growthrate_coef_matrix_5s_1_P=growthrate_coef_matrix_5s_1 %>% filter(sample %in% c('TRMM-FE-Psychro14','TRMM-Man-Psychro14'))
+
+
+growthrate_coef_matrix_5s_1$sample=as.character(growthrate_coef_matrix_5s_1$sample)
+growthrate_coef_matrix_5s_agg=growthrate_coef_matrix_5s_1 %>% group_by(sample) %>% summarise(mean_mumax=mean(mumax),sd_mumax=sd(mumax))
+
+growthrate_coef_matrix_5s_agg$substrate=sapply(strsplit(growthrate_coef_matrix_5s_agg$sample,"-"),"[[",2)
+growthrate_coef_matrix_5s_agg$taxa=sapply(strsplit(growthrate_coef_matrix_5s_agg$sample,"-"),"[[",3)
+growthrate_coef_matrix_5s_agg$taxa=factor(growthrate_coef_matrix_5s_agg$taxa,levels=ASV5_list_short)
+#growthrate_coef_matrix_5s_agg=rbind(growthrate_coef_matrix_5s_agg,c('TRMM-Man-Flavo71',0,0,'Man','Flavo71'))
+growthrate_coef_matrix_5s_agg$mean_mumax=as.numeric(growthrate_coef_matrix_5s_agg$mean_mumax)
+growthrate_coef_matrix_5s_agg$sd_mumax=as.numeric(growthrate_coef_matrix_5s_agg$sd_mumax)
+growthrate_coef_matrix_5s_diff=growthrate_coef_matrix_5s_agg %>% group_by(taxa) %>% summarize(diff_mean_mumax=mean_mumax[1]-mean_mumax[2],sd_sd_mumax=(sd_mumax[1]^2+sd_mumax[2]^2)^0.5,                                                                                          ratio_mean_mumax=mean_mumax[1]/mean_mumax[2],percent_error_squared=((sd_mumax[1]/mean_mumax[1])^2+(sd_mumax[2]/mean_mumax[2])^2)^0.5) #[1] is FE, [2] is Man
+growthrate_coef_matrix_5s_diff$sd_ratio_mumax=growthrate_coef_matrix_5s_diff$ratio_mean_mumax*growthrate_coef_matrix_5s_diff$percent_error_squared
+
+growthrate_coef_matrix_5s_diff_ratio=growthrate_coef_matrix_5s_diff %>% filter(taxa!='Flavo71')
+
+growthrate_coef_matrix_5s_agg_early=growthrate_coef_matrix_5s_agg %>% filter(taxa %in% ASV5_list_early)
+
+p_5s_growth_early=ggplot(growthrate_coef_matrix_5s_agg_early)+
+  geom_bar(aes(fill=taxa,color=substrate, y=mean_mumax,x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = mean_mumax + sd_mumax, ymin = mean_mumax-sd_mumax,x=taxa,color=substrate),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=c('#594c0c','darkgrey'))+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(~substrate,nrow=1)+ylab('max per capita growth rate /h')+xlab("")+theme_bw()+
+  theme(legend.position = "bottom",panel.spacing.x=unit(1, "lines"),axis.text.x=element_text(size=12,angle = 45,vjust = 1,hjust=1),legend.text = element_text(size=12),axis.title=element_text(size=12),axis.text.y=element_text(size=12))+
+  guides(fill=guide_legend(nrow=2,byrow=TRUE))
+  
+
+
+p_5s_growth=ggplot(growthrate_coef_matrix_5s_agg)+
+  geom_bar(aes(fill=taxa,color=substrate, y=mean_mumax,x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = mean_mumax + sd_mumax, ymin = mean_mumax-sd_mumax,x=taxa,color=substrate),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=c('#594c0c','darkgrey'))+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(~substrate,nrow=1)+ylab('max per capita growth rate /h')+xlab("")+theme_bw()+
+  theme(legend.position = "bottom",panel.spacing.x=unit(1, "lines"),axis.text.x=element_text(size=12,angle = 45,vjust = 1,hjust=1),legend.text = element_text(size=12),axis.title=element_text(size=12),axis.text.y=element_text(size=12))
+
+
+p_5s_growth_ratio=ggplot(growthrate_coef_matrix_5s_diff_ratio)+
+  geom_bar(aes(fill=taxa, y=ratio_mean_mumax,x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = ratio_mean_mumax + sd_ratio_mumax, ymin = ratio_mean_mumax-sd_ratio_mumax,x=taxa,color=taxa),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=ASV5palette)+
+  scale_fill_manual(values=ASV5palette)+
+  geom_hline(aes(yintercept=1), color="black", linetype="dashed")+
+  ylab('Ratio of max.growth rate\n(FE to Mannitol)')+xlab("")+theme_bw()+
+  theme(legend.position = "none",axis.text.x=element_text(size=12,angle = 45,vjust=1,hjust=1),legend.text = element_text(size=12),axis.title=element_text(size=12),axis.text.y=element_text(size=12))
+
+p_5s_growth
+
+
+```
+##Carrying capacity for all 11 strains
+```{r}
+allgrowth_melt_11s_max=allgrowth11_melt %>% group_by(.dots=c("taxa","substrate","replicate")) %>%  summarise(max_cc=max(cell_count))
+allgrowth_melt_11s_max_agg=allgrowth_melt_11s_max %>% group_by(.dots=c("taxa","substrate")) %>% summarise(mean_max_cc=mean(max_cc),sd_max_cc=sd(max_cc))
+allgrowth_melt_11s_max_agg$sample=paste0('TRMM-',allgrowth_melt_11s_max_agg$substrate,'-',allgrowth_melt_11s_max_agg$taxa)
+
+allgrowth_melt_11s_max_agg$taxa=factor(allgrowth_melt_11s_max_agg$taxa,levels = ASV11list_new)
+
+growth_max_matrix_11s_diff=allgrowth_melt_11s_max_agg %>% group_by(taxa) %>% summarize(diff_mean_max_cc=mean_max_cc[1]-mean_max_cc[2],sd_sd_max_cc=(sd_max_cc[1]^2+sd_max_cc[2]^2)^0.5,
+                                                                                            ratio_mean_max_cc=mean_max_cc[2]/mean_max_cc[1],percent_error_squared=((sd_max_cc[1]/mean_max_cc[1])^2+(sd_max_cc[2]/mean_max_cc[2])^2)^0.5) #[1] is FE, [2] is Man
+  
+growth_max_matrix_11s_diff$sd_ratio_max_cc=growth_max_matrix_11s_diff$ratio_mean_max_cc*growth_max_matrix_11s_diff$percent_error_squared
+
+growth_max_matrix_11s_diff_ratio=growth_max_matrix_11s_diff %>% filter(taxa!='Arenibacter71')
+
+p_11s_max_ratio=ggplot(growth_max_matrix_11s_diff_ratio)+
+  geom_bar(aes(fill=taxa, y=ratio_mean_max_cc,x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = ratio_mean_max_cc + sd_ratio_max_cc, ymin = ratio_mean_max_cc-sd_ratio_max_cc,x=taxa,color=taxa),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=ASV11Palette[-2])+
+  scale_fill_manual(values=ASV11Palette[-2])+
+  geom_hline(aes(yintercept=1), color="black", linetype="dashed")+
+  ylab('Ratio of max.carrying capacity\n(Mannitol to FL)')+theme_bw()+xlab("")+
+  theme(legend.position = "none",axis.text.x=element_text(size=16,angle = 30,vjust=1,hjust=1),legend.text = element_text(size=16),axis.title=element_text(size=16),axis.text.y=element_text(size=16))
+
+
+
+
+#png('Figures_final/S7b_max_carrying_capacity_ratio_11s.png',width =3000,height=1400,res=300)
+p_11s_max_ratio
+#dev.off()
+
+```
+
+
+
+
+
+#Compare maximum carrying capacity
+```{r}
+allgrowth_melt_5s=allgrowth11_melt %>% filter(taxa %in% ASV5_list_short) %>% filter(!(taxa=='Flavo71' & time==16) )
+allgrowth_melt_5s_max=allgrowth_melt_5s %>% group_by(.dots=c("taxa","substrate","replicate")) %>%  summarise(max_cc=max(cell_count))
+allgrowth_melt_5s_max_agg=allgrowth_melt_5s_max %>% group_by(.dots=c("taxa","substrate")) %>% summarise(mean_max_cc=mean(max_cc),sd_max_cc=sd(max_cc))
+allgrowth_melt_5s_max_agg$taxa=factor(allgrowth_melt_5s_max_agg$taxa,levels = ASV5_list_short)
+
+allgrowth_melt_5s_max_agg=allgrowth_melt_5s_max_agg %>% mutate(category=case_when(taxa %in% ASV5_list_early ~ 'Early', TRUE ~ 'Late'))
+allgrowth_melt_5s_max_agg_early=allgrowth_melt_5s_max_agg %>% filter(category=='Early')
+
+growth_max_matrix_5s_d1=allgrowth_melt_5s_max_agg %>% group_by(substrate,category) %>%
+  summarize(diff_mean_max_cc=mean_max_cc[1]-mean_max_cc[2],sd_sd_max_cc=(sd_max_cc[1]^2+sd_max_cc[2]^2)^0.5)
+
+growth_max_matrix_5s_dd=growth_max_matrix_5s_d1 %>% group_by(category) %>% 
+  summarize(dd_mean_max_cc=diff_mean_max_cc[1]-diff_mean_max_cc[2],sd_sd_sd_max_cc=(sd_sd_max_cc[1]^2+sd_sd_max_cc[2]^2)^0.5)
+
+
+growth_max_matrix_5s_diff=allgrowth_melt_5s_max_agg %>% group_by(taxa,category) %>% summarize(diff_mean_max_cc=mean_max_cc[1]-mean_max_cc[2],sd_sd_max_cc=(sd_max_cc[1]^2+sd_max_cc[2]^2)^0.5,                                                                                        ratio_mean_max_cc=mean_max_cc[1]/mean_max_cc[2],percent_error_squared=((sd_max_cc[1]/mean_max_cc[1])^2+(sd_max_cc[2]/mean_max_cc[2])^2)^0.5) #[1] is FE, [2] is Man
+  
+growth_max_matrix_5s_diff$sd_ratio_max_cc=growth_max_matrix_5s_diff$ratio_mean_max_cc*growth_max_matrix_5s_diff$percent_error_squared
+
+growth_max_matrix_5s_diff_ratio=growth_max_matrix_5s_diff %>% filter(taxa!='Flavo71')
+growth_max_matrix_5s_diff_ratio_early=growth_max_matrix_5s_diff_ratio %>% filter(category=='Early')
+growth_max_matrix_5s_diff_early=growth_max_matrix_5s_diff %>% filter(category=='Early')
+
+p_diff_2e=ggplot(growth_max_matrix_5s_diff_early)+ geom_bar(aes(fill=taxa,y=diff_mean_max_cc, x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+    geom_errorbar(aes(ymax = diff_mean_max_cc + sd_sd_max_cc, ymin = diff_mean_max_cc-sd_sd_max_cc,x=taxa,color=taxa),
+    position =position_dodge(0.6), width=0.2,size=1)+scale_color_manual(values=ASV5palette)+
+  scale_fill_manual(values=ASV5palette[1:2])+
+  ylab('Delta max growth (FE - Mannitol) ')+xlab('taxa')+theme_classic()+
+  theme(legend.position = "none",axis.text.x=element_text(size=12,angle = 45,vjust=1,hjust=1),legend.text = element_text(size=12),axis.title=element_text(size=12),axis.text.y=element_text(size=12))
+
+#png('Figures_compiled/growth_curves/delta_early.png',width=600,height=1200,res=300)
+p_diff_2e
+#dev.off()
+
+p_dd=ggplot(growth_max_matrix_5s_dd)+ geom_bar(aes(fill=taxa,y=diff_mean_max_cc, x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)
+
+t.test2 <- function(m1,m2,s1,s2,n1,n2,m0=0,equal.variance=FALSE)
+{
+    if( equal.variance==FALSE ) 
+    {
+        se <- sqrt( (s1^2/n1) + (s2^2/n2) )
+        # welch-satterthwaite df
+        df <- ( (s1^2/n1 + s2^2/n2)^2 )/( (s1^2/n1)^2/(n1-1) + (s2^2/n2)^2/(n2-1) )
+    } else
+    {
+        # pooled standard deviation, scaled by the sample sizes
+        se <- sqrt( (1/n1 + 1/n2) * ((n1-1)*s1^2 + (n2-1)*s2^2)/(n1+n2-2) ) 
+        df <- n1+n2-2
+    }      
+    t <- (m1-m2-m0)/se 
+    dat <- c(m1-m2, se, t, 2*pt(-abs(t),df))    
+    names(dat) <- c("Difference of means", "Std Error", "t", "p-value")
+    return(dat) 
+}
+
+t.test2(m1=84666667,m2=117333333,s1=30402851,s2=17841898,n1=3,n2=3)
+
+
+#allgrowth_melt_5s_max_agg_early_Man=allgrowth_melt_5s_max_agg_early %>% filter(substrate=='Man')
+p_5s_max_early=ggplot(allgrowth_melt_5s_max_agg_early)+
+  geom_bar(aes(fill=taxa,color=substrate, y=mean_max_cc, x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = mean_max_cc + sd_max_cc, ymin = mean_max_cc-sd_max_cc,x=taxa,color=substrate),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=c('#594c0c','darkgrey'))+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(~substrate,nrow=1)+
+  ylab('max cells/mL')+theme_bw()+xlab("")+
+  theme(legend.position = "bottom",panel.spacing.x=unit(1, "lines"),axis.text.x=element_text(size=12,angle = 45,vjust=1,hjust=1),legend.text = element_text(size=12),axis.title=element_text(size=12),axis.text.y=element_text(size=12))+
+  guides(fill=guide_legend(nrow=2,byrow=TRUE))
+
+
+
+
+
+p_5s_max=ggplot(allgrowth_melt_5s_max_agg)+
+  geom_bar(aes(fill=taxa,color=substrate, y=mean_max_cc, x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = mean_max_cc + sd_max_cc, ymin = mean_max_cc-sd_max_cc,x=taxa,color=substrate),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  scale_color_manual(values=c('#594c0c','darkgrey'))+
+  scale_fill_manual(values=ASV5palette)+
+  facet_wrap(~substrate,nrow=1)+ylab('max cells/mL')+theme_bw()+xlab("")+
+  theme(legend.position = "bottom",panel.spacing.x=unit(1, "lines"),axis.text.x=element_text(size=12,angle = 45,vjust=1,hjust=1),legend.text = element_text(size=12),axis.title=element_text(size=12),axis.text.y=element_text(size=12))
+
+p_5s_max_ratio_early=ggplot(growth_max_matrix_5s_diff_ratio_early)+
+  geom_bar(aes(fill=taxa, y=ratio_mean_max_cc,x=taxa),stat="identity",position = position_dodge(0.6), width=0.8,size=1,alpha=0.6)+
+  geom_errorbar(aes(ymax = ratio_mean_max_cc + sd_ratio_max_cc, ymin = ratio_mean_max_cc-sd_ratio_max_cc,x=taxa,color=taxa),
+                position =position_dodge(0.6), width=0.2,size=1)+
+  
+  scale_color_manual(values=ASV5palette)+
+  scale_fill_manual(values=ASV5palette)+
+  geom_hline(aes(yintercept=1), color="black", linetype="dashed")+
+  ylab('Ratio of max.carrying capacity\n(FE to mannitol)')+theme_bw()+xlab("")+
+  theme(legend.position = "none",axis.text.x=element_text(size=12,angle = 45,vjust=1,hjust=1),legend.text = element_text(size=12),axis.title=element_text(size=12),axis.text.y=element_text(size=12))
+
+p_5s_max
+
+```
+#Figure for FACS vs. CFU
+```{r}
+FACS_CFU_5s=read.csv('crossfeeding/FACS/080819_CFU_FACS_counts/FACS_CFU_summary_R.csv',header = T,row.names = 1)
+FACS_CFU_5s=as.data.frame(t(FACS_CFU_5s))
+FACS_CFU_5s$taxa=rownames(FACS_CFU_5s)
+FACS_CFU_5s$taxa=short_to_long(FACS_CFU_5s$taxa)
+FACS_CFU_5s$taxa=factor(FACS_CFU_5s$taxa,ASV5list_new)
+#melt_FACS_CFU_5s=melt(FACS_CFU_5s,id='char')
+p_CFU_FACS_log10=ggplot(FACS_CFU_5s)+geom_point(aes(x=CFU_7h,y=FACS_7h,color=taxa),size=3)+
+  geom_point(aes(x=CFU_20h,y=FACS_20h,color=taxa),size=5)+
+  geom_errorbar(aes(x=CFU_7h,ymin=FACS_7h-FACS_7h_SD,ymax=FACS_7h+FACS_7h_SD,color=taxa,width=0))+
+  geom_errorbar(aes(x=CFU_20h,ymin=FACS_20h-FACS_20h_SD,ymax=FACS_20h+FACS_20h_SD,color=taxa,width=0))+
+  geom_errorbarh(aes(y=FACS_7h,xmin=CFU_7h-CFU_7h_SD,xmax=CFU_7h+CFU_7h_SD,color=taxa,height=0))+
+  geom_errorbarh(aes(y=FACS_20h,xmin=CFU_20h-CFU_20h_SD,xmax=CFU_20h+CFU_20h_SD,color=taxa,height=0))+
+  scale_x_continuous(trans = 'log10') +
+  scale_y_continuous(trans = 'log10')+
+  scale_color_manual(values=ASV5Palette)+geom_abline(intercept = 0,slope = 1,linetype=2)+
+  xlab('cells/mL by CFU')+
+  ylab('cells/mL by FACS')
+
+png('Figures_final/S11a_FACS_CFU_log.png',res=300,height=1200,width=2400)
+p_CFU_FACS_log10+theme_classic(base_size = 18)
+dev.off()
+
+```
+#Figure for FACS SYBR vs. DAPI, Canto vs. Fortessa
+```{r}
+FACS_compare=read.csv('crossfeeding/FACS/070819test_Canto_Fortessa_counts/Fortessa_Canto_counts_summary_R.csv',header = T)
+names(FACS_compare)[1]='taxa'
+FACS_compare$taxa=short_to_long(FACS_compare$taxa)
+FACS_compare$taxa=factor(FACS_compare$taxa,ASV5list_new)
+
+
+p_FACS_Canto_Fortessa=ggplot(FACS_compare)+geom_point(aes(x=Fortessa_SYBR_8h,y=Canto_SYBR_8h,color=taxa),size=3)+
+  geom_point(aes(x=Fortessa_SYBR_24h,y=Canto_SYBR_24h,color=taxa),size=5)+
+
+  scale_x_continuous(trans = 'log10',limits = c(10^6, 5*10^8)) +
+  scale_y_continuous(trans = 'log10',limits = c(10^6, 5*10^8))+
+  scale_color_manual(values=ASV5Palette)+geom_abline(intercept = 0,slope = 1,linetype=2)+
+  xlab('cells/mL by Fortessa (SYBR)')+
+  ylab('cells/mL by Canto (SYBR)')
+p_FACS_Canto_Fortessa
+
+p_FACS_SYBR_DAPI=ggplot(FACS_compare)+geom_point(aes(x=Fortessa_SYBR_8h,y=Fortessa_DAPI_8h,color=taxa),size=3)+
+  geom_point(aes(x=Fortessa_SYBR_24h,y=Fortessa_DAPI_24h,color=taxa),size=5)+
+
+  scale_x_continuous(trans = 'log10',limits = c(10^6, 5*10^8)) +
+  scale_y_continuous(trans = 'log10',limits = c(10^6, 5*10^8))+
+  scale_color_manual(values=ASV5Palette)+geom_abline(intercept = 0,slope = 1,linetype=2)+
+  xlab('cells/mL by SYBR')+
+  ylab('cells/mL by DAPI')
+p_FACS_SYBR_DAPI
+
+png('Figures_final/S11b_FACS_Canto_Fortessa_log.png',res=300,height=1200,width=2400)
+p_FACS_Canto_Fortessa+theme_classic(base_size = 18)
+dev.off()
+
+png('Figures_final/S11c_FACS_SYBR_DAPI_log.png',res=300,height=1200,width=2400)
+p_FACS_SYBR_DAPI+theme_classic(base_size = 18)
+dev.off()
+
+```
+#Growth curves for RNA-seq
+```{r}
+growth=read.csv('crossfeeding/RNA-seq/growth_curves_RNAseq.csv',header=T)
+sample=read.csv('crossfeeding/RNA-seq/sampling_time_RNAseq.csv',header=T)
+sample$t1=c(7.1,7.0,6.9,6.5)
+sample$t2=c(11.45,11.55,10.0,9.5)
+growth$ASV=short_to_long(growth$ASV)
+sample$ASV=short_to_long(sample$ASV)
+growth$ASV=factor(growth$ASV,levels = ASV5list_new)
+sample$ASV=factor(sample$ASV,levels = ASV5list_new)
+
+
+g2=ggplot(growth,aes(x=time,y=mean,group=ASV,col=ASV))+geom_line(size=0.5)+
+  geom_point()+
+  geom_vline(sample,mapping = aes(xintercept=t1,col=ASV),size=1,lty=2)+
+  geom_vline(sample,mapping = aes(xintercept=t2,col=ASV),size=1,lty=2)+
+  annotate(geom = "rect", xmin = 5, xmax = 8, ymin = -Inf, ymax = Inf,
+           fill = "grey", colour = NA, alpha = 0.3)+
+  annotate(geom = "rect", xmin = 9, xmax = 14, ymin = -Inf, ymax = Inf,
+           fill = "grey", colour = NA, alpha = 0.3)+
+  scale_color_manual(values=ASV5Palette[2:5],guide=guide_legend(ncol=2))+
+  
+  theme_bw(base_size = 18)+
+  theme(legend.position = 'top',legend.title = element_blank())+
+  xlab('Time (h)')+ylab('Cells/mL')
+
+png('Figures_final/F5a_growth_curve_RNASeq.png',width=1500,height=1500,res=300)
+print(g2)
+dev.off()
+
+```
+
+
